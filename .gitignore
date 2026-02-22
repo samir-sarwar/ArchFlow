@@ -47,3 +47,9 @@ htmlcov/
 
 # Logs
 *.log
+
+
+README.md
+agent-context/
+docs/
+testing.sh
