@@ -1,0 +1,235 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: ArchFlow - Voice-first AI architecture diagram designer
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 1024
+    Tracing: Active
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        CONVERSATION_TABLE_NAME: !Ref ConversationsTable
+        UPLOADS_BUCKET: !Ref UploadsBucket
+        EXPORTS_BUCKET: !Ref ExportsBucket
+        BEDROCK_MODEL_PRO: us.amazon.nova-pro-v1:0
+        BEDROCK_MODEL_LITE: us.amazon.nova-lite-v1:0
+        BEDROCK_MODEL_SONIC: us.amazon.nova-sonic-v2:0
+        LOG_LEVEL: INFO
+
+Resources:
+  # ─── WebSocket API ───
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub archflow-websocket-${Environment}
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+
+  WebSocketStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: !Ref Environment
+      AutoDeploy: true
+
+  ConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      Target: !Sub integrations/${WebSocketIntegration}
+
+  DisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      Target: !Sub integrations/${WebSocketIntegration}
+
+  DefaultRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $default
+      Target: !Sub integrations/${WebSocketIntegration}
+
+  WebSocketIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${WebSocketFunction.Arn}/invocations
+
+  # ─── REST API ───
+  RestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub archflow-rest-${Environment}
+      StageName: !Ref Environment
+      Cors:
+        AllowOrigin: "'*'"
+        AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+
+  # ─── Lambda Functions ───
+  WebSocketFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-websocket-${Environment}
+      Handler: src.handlers.websocket.lambda_handler
+      CodeUri: .
+      MemorySize: 2048
+      Timeout: 300
+      Environment:
+        Variables:
+          WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+      Policies:
+        - AmazonBedrockFullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  WebSocketFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref WebSocketFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  VoiceStreamFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-voice-stream-${Environment}
+      Handler: src.handlers.voice_stream.lambda_handler
+      CodeUri: .
+      MemorySize: 2048
+      Timeout: 300
+      Policies:
+        - AmazonBedrockFullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+
+  FileUploadFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-file-upload-${Environment}
+      Handler: src.handlers.file_upload.lambda_handler
+      CodeUri: .
+      MemorySize: 1024
+      Timeout: 300
+      Policies:
+        - AmazonBedrockFullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+                - textract:AnalyzeDocument
+              Resource: "*"
+      Events:
+        Upload:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /upload
+            Method: POST
+
+  ExportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-export-${Environment}
+      Handler: src.handlers.export.lambda_handler
+      CodeUri: .
+      MemorySize: 1024
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - S3CrudPolicy:
+            BucketName: !Ref ExportsBucket
+      Events:
+        Export:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /export
+            Method: POST
+        Share:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /share
+            Method: POST
+
+  # ─── DynamoDB ───
+  ConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub archflow-conversations-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ─── S3 Buckets ───
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub archflow-uploads-${Environment}-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldUploads
+            Status: Enabled
+            ExpirationInDays: 7
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, PUT, POST]
+            AllowedOrigins: ["*"]
+            MaxAge: 3600
+
+  ExportsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub archflow-exports-${Environment}-${AWS::AccountId}
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldExports
+            Status: Enabled
+            ExpirationInDays: 30
+
+Outputs:
+  WebSocketUrl:
+    Description: WebSocket API URL
+    Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+
+  RestApiUrl:
+    Description: REST API URL
+    Value: !Sub https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+
+  ConversationsTableName:
+    Description: DynamoDB table name
+    Value: !Ref ConversationsTable

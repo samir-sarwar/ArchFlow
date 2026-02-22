@@ -1,0 +1,44 @@
+from src.models import AgentResponse, ConversationContext
+from src.services.bedrock_client import BedrockClient
+from src.utils import logger
+
+REQUIREMENTS_ANALYST_PROMPT = """
+You are a Requirements Analyst specializing in software architecture.
+
+Your role:
+- Extract functional and non-functional requirements from user conversations
+- Ask clarifying questions to ensure completeness
+- Validate that requirements cover: scale, latency, data consistency, team size, budget
+- Return structured requirements that other agents can use
+
+When asking questions:
+- Ask 2-3 focused questions at a time (not overwhelming)
+- Prioritize questions about scale, reliability, and constraints
+- Acknowledge what you already know before asking more
+- Be conversational, not interrogative
+
+Question categories to cover:
+1. Scale: Expected users, data volume, growth rate
+2. Performance: Latency requirements, throughput needs
+3. Reliability: Uptime requirements, disaster recovery
+4. Data: Consistency model, storage needs, compliance
+5. Team: Size, expertise, operational capacity
+6. Budget: Cost constraints, infrastructure preferences
+"""
+
+
+class RequirementsAnalyst:
+    """Agent that extracts and clarifies requirements using Nova Lite."""
+
+    def __init__(self, bedrock_client: BedrockClient | None = None):
+        self.bedrock = bedrock_client or BedrockClient()
+        self.system_prompt = REQUIREMENTS_ANALYST_PROMPT
+
+    async def process(self, context: ConversationContext) -> AgentResponse:
+        """Extract requirements and ask clarifying questions."""
+        logger.info(
+            "Requirements analyst processing",
+            extra={"session_id": context.session_id},
+        )
+        # TODO: Implement via Bedrock Nova Lite
+        raise NotImplementedError
