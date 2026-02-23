@@ -15,8 +15,11 @@ class ContextAnalyzer:
             "Context analyzer processing",
             extra={"session_id": context.session_id},
         )
-        # TODO: Implement via Textract + Nova embeddings
-        raise NotImplementedError
+        # TODO: Full implementation via Textract + Nova embeddings
+        return AgentResponse(
+            text="Document analysis is not yet available. Please describe your architecture verbally and I'll help you design it!",
+            agent_used="context_analyzer",
+        )
 
     async def process_document(self, file_key: str, file_type: str) -> dict:
         """Extract and analyze document content from S3."""

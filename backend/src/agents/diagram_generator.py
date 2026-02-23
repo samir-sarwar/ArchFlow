@@ -39,5 +39,39 @@ class DiagramGenerator:
             "Diagram generator processing",
             extra={"session_id": context.session_id},
         )
-        # TODO: Implement via Bedrock Nova Lite
-        raise NotImplementedError
+
+        conversation = "\n".join(
+            f"{m.role}: {m.content}" for m in context.messages
+        )
+
+        existing = context.current_diagram or "No existing diagram - create a new one."
+
+        prompt = f"""Based on this architecture conversation, generate a Mermaid.js diagram.
+
+Conversation:
+{conversation}
+
+Existing diagram to update (if any):
+{existing}
+
+Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation - just the Mermaid syntax."""
+
+        diagram_syntax = await self.bedrock.invoke_lite(
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+        )
+
+        # Strip code fences if the model adds them anyway
+        cleaned = diagram_syntax.strip()
+        if cleaned.startswith("```mermaid"):
+            cleaned = cleaned[len("```mermaid"):].strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:].strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+
+        return AgentResponse(
+            text="I've updated the diagram based on your requirements.",
+            agent_used="diagram_generator",
+            diagram_update=cleaned,
+        )

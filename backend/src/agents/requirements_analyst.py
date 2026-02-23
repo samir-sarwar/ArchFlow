@@ -40,5 +40,23 @@ class RequirementsAnalyst:
             "Requirements analyst processing",
             extra={"session_id": context.session_id},
         )
-        # TODO: Implement via Bedrock Nova Lite
-        raise NotImplementedError
+
+        conversation = "\n".join(
+            f"{m.role}: {m.content}" for m in context.messages
+        )
+
+        prompt = f"""Given this architecture conversation:
+
+{conversation}
+
+Ask 2-3 clarifying questions to better understand the requirements. Be conversational and friendly."""
+
+        response_text = await self.bedrock.invoke_lite(
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+        )
+
+        return AgentResponse(
+            text=response_text,
+            agent_used="requirements_analyst",
+        )

@@ -51,5 +51,34 @@ class ArchitectureAdvisor:
             "Architecture advisor processing",
             extra={"session_id": context.session_id},
         )
-        # TODO: Implement via Bedrock Nova Pro
-        raise NotImplementedError
+
+        conversation = "\n".join(
+            f"{m.role}: {m.content}" for m in context.messages
+        )
+
+        prompt = f"""Given this conversation about a software architecture:
+
+{conversation}
+
+Current diagram (if any):
+{context.current_diagram or "No diagram yet."}
+
+Provide architecture advice. If appropriate, include a Mermaid.js diagram wrapped in ```mermaid blocks."""
+
+        response_text = await self.bedrock.invoke_pro(
+            prompt=prompt,
+            system_prompt=self.system_prompt,
+        )
+
+        # Extract mermaid diagram if present
+        diagram_update = None
+        if "```mermaid" in response_text:
+            start = response_text.index("```mermaid") + len("```mermaid")
+            end = response_text.index("```", start)
+            diagram_update = response_text[start:end].strip()
+
+        return AgentResponse(
+            text=response_text,
+            agent_used="architecture_advisor",
+            diagram_update=diagram_update,
+        )
