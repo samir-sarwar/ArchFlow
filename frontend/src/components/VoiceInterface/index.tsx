@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ConversationDisplay } from './ConversationDisplay';
+import { VoiceRecorder } from './VoiceRecorder';
 import { useConversation } from '@/hooks/useConversation';
 import { useUIStore } from '@/stores/uiStore';
 
@@ -22,6 +23,7 @@ export function VoiceInterface() {
         onSubmit={handleSubmit}
         className="flex items-center gap-2 p-4 border-t border-gray-200"
       >
+        <VoiceRecorder />
         <input
           type="text"
           value={input}
@@ -42,5 +44,6 @@ export function VoiceInterface() {
   );
 }
 
+export { VoiceRecorder } from './VoiceRecorder';
 export { ConversationDisplay } from './ConversationDisplay';
 export { AudioVisualizer } from './AudioVisualizer';
