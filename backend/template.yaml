@@ -97,11 +97,19 @@ Resources:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
         - Statement:
             - Effect: Allow
               Action:
                 - execute-api:ManageConnections
               Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+              Resource: "*"
 
   WebSocketFunctionPermission:
     Type: AWS::Lambda::Permission

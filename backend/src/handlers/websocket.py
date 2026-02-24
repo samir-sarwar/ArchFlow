@@ -91,6 +91,9 @@ def handle_message(event, connection_id):
     if action == "voice":
         return _handle_voice_message(body, connection_id, session_id)
 
+    if action == "file_uploaded":
+        return _handle_file_uploaded(body, connection_id, session_id)
+
     return _handle_text_message(body, connection_id, session_id)
 
 
@@ -222,6 +225,123 @@ async def _process_message(session_id: str | None, text: str) -> dict:
         "agent": response.agent_used,
         "diagram": response.diagram_update,
     }
+
+
+def _handle_file_uploaded(body, connection_id, session_id):
+    """Handle notification that a file was uploaded to S3."""
+    file_key = body.get("fileKey", "")
+    file_name = body.get("fileName", "")
+    content_type = body.get("contentType", "")
+
+    if not file_key or not session_id:
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "Missing fileKey or sessionId."},
+        })
+        return {"statusCode": 400}
+
+    # Send processing status immediately
+    _send_to_client(connection_id, {
+        "type": "file_status",
+        "sessionId": session_id,
+        "payload": {"fileKey": file_key, "status": "processing"},
+    })
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            _process_uploaded_file(session_id, file_key, file_name, content_type)
+        )
+    except Exception as e:
+        logger.error("File processing error", exc_info=True)
+        _send_to_client(connection_id, {
+            "type": "file_status",
+            "sessionId": session_id,
+            "payload": {
+                "fileKey": file_key,
+                "status": "error",
+                "message": str(e),
+            },
+        })
+        return {"statusCode": 500}
+    finally:
+        loop.close()
+
+    # Send analysis result back
+    _send_to_client(connection_id, {
+        "type": "file_analysis",
+        "sessionId": session_id,
+        "payload": {
+            "fileKey": file_key,
+            "fileName": file_name,
+            "status": "ready",
+            "analysis": result.get("analysis", {}),
+            "summary": result.get("summary", ""),
+        },
+    })
+
+    # If analysis produced a diagram, send that too
+    if result.get("diagram"):
+        _send_to_client(connection_id, {
+            "type": "diagram_update",
+            "sessionId": session_id,
+            "payload": {"diagram": result["diagram"]},
+        })
+
+    return {"statusCode": 200}
+
+
+async def _process_uploaded_file(session_id, file_key, file_name, content_type):
+    """Process uploaded file: extract text, analyze, store in session."""
+    context_analyzer = orchestrator.agents["context"]
+
+    # Run analysis
+    if content_type.startswith("image/"):
+        result = await context_analyzer.analyze_image(file_key)
+    else:
+        result = await context_analyzer.process_document(file_key, content_type)
+
+    analysis = result.get("analysis", {})
+
+    # Build summary text
+    if isinstance(analysis, dict):
+        summary = analysis.get("summary", "Analysis complete.")
+    else:
+        summary = str(analysis)[:500]
+
+    # Store file metadata + analysis in the session
+    file_metadata = {
+        "file_key": file_key,
+        "file_name": file_name,
+        "content_type": content_type,
+        "status": "ready",
+        "analysis_summary": summary,
+    }
+
+    context = await state_manager.get_session(session_id)
+    uploaded_files = context.uploaded_files + [file_metadata]
+    await state_manager.update_session(session_id, {"uploaded_files": uploaded_files})
+
+    # Add a system message so other agents have context about the upload
+    system_msg = Message(
+        role="assistant",
+        content=f"[File analyzed: {file_name}] {summary}",
+        agent="context_analyzer",
+    )
+    await state_manager.add_message(session_id, system_msg)
+
+    # Check if a diagram was generated (from image analysis)
+    diagram = None
+    if isinstance(analysis, str):
+        import re
+        mermaid_match = re.search(r"```mermaid\s*\n(.*?)```", analysis, re.DOTALL)
+        if mermaid_match:
+            diagram = mermaid_match.group(1).strip()
+            await state_manager.save_diagram_version(
+                session_id, diagram, description=f"Generated from {file_name}"
+            )
+
+    return {"analysis": analysis, "summary": summary, "diagram": diagram}
 
 
 def _send_to_client(connection_id: str, payload: dict) -> None:

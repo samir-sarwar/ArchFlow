@@ -49,6 +49,31 @@ export function useConversation() {
         setError(null);
       }
 
+      if (data.type === 'file_status') {
+        // File processing status update — handled by useFileUpload via callback
+        if (data.payload.status === 'error') {
+          setError(data.payload.message || 'File processing failed');
+        }
+      }
+
+      if (data.type === 'file_analysis') {
+        // File analysis complete — add result to conversation
+        const analysisMsg: Message = {
+          role: 'assistant',
+          content: `**File analyzed: ${data.payload.fileName || 'document'}**\n\n${data.payload.summary || 'Analysis complete.'}`,
+          timestamp: new Date().toISOString(),
+          agent: 'context_analyzer',
+        };
+        conversationStore.addMessage(analysisMsg);
+
+        // If the analysis included a diagram update
+        if (data.payload.diagram) {
+          updateDiagram(data.payload.diagram, 'Generated from uploaded file');
+        }
+
+        setLoading(false);
+      }
+
       if (data.type === 'error') {
         setError(data.payload.message);
         setLoading(false);
@@ -118,5 +143,6 @@ export function useConversation() {
     isConnected,
     sendMessage,
     sendVoiceMessage,
+    sendWsMessage: wsSend,
   };
 }

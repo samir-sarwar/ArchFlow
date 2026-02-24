@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { ConversationDisplay } from './ConversationDisplay';
 import { VoiceRecorder } from './VoiceRecorder';
+import { Dropzone, FileList } from '@/components/FileUpload';
 import { useConversation } from '@/hooks/useConversation';
+import { useFileUpload } from '@/hooks/useFileUpload';
 import { useUIStore } from '@/stores/uiStore';
 
 export function VoiceInterface() {
   const [input, setInput] = useState('');
-  const { sendMessage, isConnected } = useConversation();
+  const [showUpload, setShowUpload] = useState(false);
+  const { sendMessage, sendWsMessage, isConnected } = useConversation();
+  const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
   const isLoading = useUIStore((s) => s.isLoading);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -16,9 +20,33 @@ export function VoiceInterface() {
     setInput('');
   };
 
+  const handleFilesSelected = (selectedFiles: File[]) => {
+    selectedFiles.forEach(uploadFile);
+  };
+
   return (
     <>
       <ConversationDisplay />
+
+      {/* File upload section */}
+      <div className="px-4 py-2 border-t border-gray-100">
+        <button
+          onClick={() => setShowUpload(!showUpload)}
+          className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
+        >
+          {showUpload ? 'Hide upload' : 'Attach files'}
+        </button>
+        {showUpload && (
+          <div className="mt-2">
+            <Dropzone
+              onFilesSelected={handleFilesSelected}
+              disabled={!isConnected}
+            />
+          </div>
+        )}
+        {files.length > 0 && <FileList files={files} onRemove={removeFile} />}
+      </div>
+
       <form
         onSubmit={handleSubmit}
         className="flex items-center gap-2 p-4 border-t border-gray-200"

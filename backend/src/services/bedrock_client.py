@@ -65,6 +65,50 @@ class BedrockClient:
             prompt, system_prompt, model_id=self.model_pro, max_tokens=4096
         )
 
+    async def invoke_with_image(
+        self,
+        image_b64: str,
+        media_type: str,
+        prompt: str,
+        system_prompt: str = "",
+        max_tokens: int = 4096,
+    ) -> str:
+        """Invoke Nova Pro with an image for vision analysis."""
+        logger.info("Invoking Bedrock with image", extra={"model_id": self.model_pro})
+
+        fmt = media_type.split("/")[-1]
+        if fmt == "jpg":
+            fmt = "jpeg"
+
+        body = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "image": {
+                                "format": fmt,
+                                "source": {"bytes": image_b64},
+                            }
+                        },
+                        {"text": prompt},
+                    ],
+                }
+            ],
+            "inferenceConfig": {"maxTokens": max_tokens, "temperature": 0.7},
+        }
+        if system_prompt:
+            body["system"] = [{"text": system_prompt}]
+
+        response = self.client.invoke_model(
+            modelId=self.model_pro,
+            body=json.dumps(body),
+            contentType="application/json",
+            accept="application/json",
+        )
+        response_body = json.loads(response["body"].read())
+        return response_body["output"]["message"]["content"][0]["text"]
+
     async def invoke_sonic(
         self, audio_pcm: bytes, system_prompt: str = ""
     ) -> dict:
