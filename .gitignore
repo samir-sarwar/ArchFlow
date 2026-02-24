@@ -53,3 +53,4 @@ README.md
 agent-context/
 docs/
 testing.sh
+sync_refs.sh
