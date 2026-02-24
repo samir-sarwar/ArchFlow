@@ -26,6 +26,11 @@ export function useConversation() {
           conversationStore.setSessionId(data.sessionId);
         }
 
+        // If voice transcription came back, update placeholder message
+        if (data.payload.transcription) {
+          conversationStore.updateLastUserMessage(data.payload.transcription);
+        }
+
         // Add assistant message to conversation
         const assistantMsg: Message = {
           role: 'assistant',
@@ -77,11 +82,41 @@ export function useConversation() {
     setError(null);
   };
 
+  // Send a voice recording to the backend
+  const sendVoiceMessage = async (audioBlob: Blob) => {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+
+    // Add placeholder user message
+    const userMsg: Message = {
+      role: 'user',
+      content: '[Voice message — transcribing...]',
+      timestamp: new Date().toISOString(),
+    };
+    conversationStore.addMessage(userMsg);
+
+    // Send voice action via WebSocket
+    wsSend({
+      action: 'voice',
+      sessionId: conversationStore.sessionId,
+      audio: base64,
+    });
+
+    setLoading(true);
+    setError(null);
+  };
+
   return {
     messages: conversationStore.messages,
     sessionId: conversationStore.sessionId,
     isRecording: conversationStore.isRecording,
     isConnected,
     sendMessage,
+    sendVoiceMessage,
   };
 }
