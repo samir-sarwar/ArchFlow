@@ -11,6 +11,13 @@ python-json-logger>=2.0
 # Diagram Validation
 mermaid-py>=0.3.0
 
+# Audio Processing
+pydub>=0.25.1
+
+# Bedrock Experimental SDK (Nova Sonic bidirectional streaming)
+aws-sdk-bedrock-runtime>=0.1.0
+smithy-aws-core>=0.1.0
+
 # Utilities
 python-dateutil>=2.8
 
