@@ -78,16 +78,25 @@ def handle_disconnect(event, connection_id):
 
 
 def handle_message(event, connection_id):
-    """Handle incoming WebSocket messages."""
+    """Handle incoming WebSocket messages — routes text and voice actions."""
     body = json.loads(event.get("body", "{}"))
     action = body.get("action", "message")
     session_id = body.get("sessionId")
-    text = body.get("text", "")
 
     logger.info(
         "WebSocket message",
         extra={"connection_id": connection_id, "action": action},
     )
+
+    if action == "voice":
+        return _handle_voice_message(body, connection_id, session_id)
+
+    return _handle_text_message(body, connection_id, session_id)
+
+
+def _handle_text_message(body, connection_id, session_id):
+    """Handle a text chat message."""
+    text = body.get("text", "")
 
     if not text:
         _send_to_client(connection_id, {
@@ -110,6 +119,65 @@ def handle_message(event, connection_id):
         "payload": {
             "text": response["text"],
             "agent": response["agent"],
+        },
+    }
+
+    if response.get("diagram"):
+        response_payload["payload"]["diagram"] = response["diagram"]
+
+    _send_to_client(connection_id, response_payload)
+
+    return {"statusCode": 200}
+
+
+def _handle_voice_message(body, connection_id, session_id):
+    """Handle a voice message: transcribe audio then route through orchestrator."""
+    import base64
+    from src.services.voice_handler import process_voice_stream
+
+    audio_b64 = body.get("audio", "")
+    if not audio_b64:
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "No audio data provided."},
+        })
+        return {"statusCode": 400}
+
+    audio_bytes = base64.b64decode(audio_b64)
+
+    # Step 1: Transcribe audio via Nova Sonic
+    loop = asyncio.new_event_loop()
+    try:
+        voice_result = loop.run_until_complete(
+            process_voice_stream(audio_bytes, session_id or "")
+        )
+    finally:
+        loop.close()
+
+    transcription = voice_result.get("transcription", "")
+    if not transcription:
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "Could not transcribe audio. Please try again."},
+        })
+        return {"statusCode": 400}
+
+    # Step 2: Route transcription through existing orchestrator pipeline
+    loop = asyncio.new_event_loop()
+    try:
+        response = loop.run_until_complete(
+            _process_message(session_id, transcription)
+        )
+    finally:
+        loop.close()
+
+    response_payload = {
+        "type": "ai_response",
+        "sessionId": response["session_id"],
+        "payload": {
+            "text": response["text"],
+            "agent": response["agent"],
+            "transcription": transcription,
         },
     }
 
