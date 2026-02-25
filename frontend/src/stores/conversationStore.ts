@@ -6,6 +6,8 @@ interface ConversationStore {
   messages: Message[];
   isRecording: boolean;
   currentTranscript: string;
+  _wsSend: ((msg: unknown) => void) | null;
+  _isConnected: boolean;
 
   setSessionId: (id: string) => void;
   addMessage: (message: Message) => void;
@@ -13,15 +15,23 @@ interface ConversationStore {
   setRecording: (isRecording: boolean) => void;
   setTranscript: (transcript: string) => void;
   clearMessages: () => void;
+  setWsSend: (fn: (msg: unknown) => void) => void;
+  setIsConnected: (connected: boolean) => void;
+  restoreSession: (data: { messages: Message[]; sessionId: string }) => void;
 }
 
 export const useConversationStore = create<ConversationStore>((set) => ({
-  sessionId: null,
+  sessionId: localStorage.getItem('archflow_sessionId'),
   messages: [],
   isRecording: false,
   currentTranscript: '',
+  _wsSend: null,
+  _isConnected: false,
 
-  setSessionId: (id) => set({ sessionId: id }),
+  setSessionId: (id) => {
+    localStorage.setItem('archflow_sessionId', id);
+    set({ sessionId: id });
+  },
 
   addMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
@@ -43,4 +53,13 @@ export const useConversationStore = create<ConversationStore>((set) => ({
   setTranscript: (transcript) => set({ currentTranscript: transcript }),
 
   clearMessages: () => set({ messages: [], currentTranscript: '' }),
+
+  setWsSend: (fn) => set({ _wsSend: fn }),
+
+  setIsConnected: (connected) => set({ _isConnected: connected }),
+
+  restoreSession: ({ messages, sessionId }) => {
+    localStorage.setItem('archflow_sessionId', sessionId);
+    set({ messages, sessionId });
+  },
 }));

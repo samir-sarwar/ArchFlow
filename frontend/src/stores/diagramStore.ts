@@ -10,6 +10,7 @@ interface DiagramStore {
   mode: EditorMode;
 
   updateDiagram: (syntax: string, description?: string) => void;
+  restoreDiagram: (syntax: string, versions: DiagramVersion[]) => void;
   undo: () => void;
   redo: () => void;
   switchMode: (mode: EditorMode) => void;
@@ -39,6 +40,13 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
         history: newHistory,
         historyIndex: newHistory.length - 1,
       };
+    }),
+
+  restoreDiagram: (syntax, versions) =>
+    set({
+      currentSyntax: syntax,
+      history: versions.slice(-MAX_HISTORY),
+      historyIndex: Math.min(versions.length, MAX_HISTORY) - 1,
     }),
 
   undo: () => {
