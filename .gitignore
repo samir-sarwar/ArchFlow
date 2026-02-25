@@ -22,6 +22,7 @@ yarn-error.log*
 # Build outputs
 frontend/dist/
 *.js.map
+*.tsbuildinfo
 
 # Environment
 .env
