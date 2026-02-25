@@ -11,7 +11,30 @@ export function useConversation() {
   const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL);
   const conversationStore = useConversationStore();
   const updateDiagram = useDiagramStore((s) => s.updateDiagram);
+  const restoreDiagram = useDiagramStore((s) => s.restoreDiagram);
   const { setLoading, setError } = useUIStore();
+
+  // Share WebSocket send function and connection state via store
+  useEffect(() => {
+    conversationStore.setWsSend(wsSend);
+  }, [wsSend]);
+
+  useEffect(() => {
+    conversationStore.setIsConnected(isConnected);
+  }, [isConnected]);
+
+  // Restore session on reconnect if sessionId exists
+  useEffect(() => {
+    if (!isConnected) return;
+    const savedSessionId = localStorage.getItem('archflow_sessionId');
+    if (savedSessionId) {
+      wsSend({
+        action: 'restore_session',
+        sessionId: savedSessionId,
+      });
+      setLoading(true);
+    }
+  }, [isConnected]);
 
   // Handle incoming WebSocket messages
   useEffect(() => {
@@ -47,6 +70,28 @@ export function useConversation() {
 
         setLoading(false);
         setError(null);
+      }
+
+      if (data.type === 'session_restored') {
+        conversationStore.restoreSession({
+          messages: data.payload.messages,
+          sessionId: data.sessionId,
+        });
+
+        if (data.payload.currentDiagram) {
+          restoreDiagram(
+            data.payload.currentDiagram,
+            data.payload.diagramVersions || []
+          );
+        }
+
+        setLoading(false);
+      }
+
+      if (data.type === 'session_expired') {
+        localStorage.removeItem('archflow_sessionId');
+        conversationStore.clearMessages();
+        setLoading(false);
       }
 
       if (data.type === 'file_status') {
@@ -96,11 +141,15 @@ export function useConversation() {
     };
     conversationStore.addMessage(userMsg);
 
+    // Include current diagram so AI always has latest state
+    const currentDiagram = useDiagramStore.getState().currentSyntax;
+
     // Send to backend via WebSocket
     wsSend({
       action: 'message',
       sessionId: conversationStore.sessionId,
       text: content,
+      currentDiagram: currentDiagram || undefined,
     });
 
     setLoading(true);
@@ -125,11 +174,15 @@ export function useConversation() {
     };
     conversationStore.addMessage(userMsg);
 
+    // Include current diagram so AI always has latest state
+    const currentDiagram = useDiagramStore.getState().currentSyntax;
+
     // Send voice action via WebSocket
     wsSend({
       action: 'voice',
       sessionId: conversationStore.sessionId,
       audio: base64,
+      currentDiagram: currentDiagram || undefined,
     });
 
     setLoading(true);
