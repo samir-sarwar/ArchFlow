@@ -15,3 +15,30 @@ export interface DiagramState {
   isValid: boolean;
   errorMessage?: string;
 }
+
+// ── Canvas / Manual Editor types ──
+
+export type NodeType = 'service' | 'database' | 'loadbalancer' | 'cache' | 'custom';
+
+export interface CanvasNode {
+  id: string;
+  label: string;
+  type: NodeType;
+  position: { x: number; y: number };
+}
+
+export interface CanvasConnection {
+  id: string;
+  sourceId: string;
+  targetId: string;
+  label?: string;
+}
+
+export const DND_ITEM_TYPES = {
+  LIBRARY_ELEMENT: 'library-element',
+} as const;
+
+export interface DraggedLibraryItem {
+  type: NodeType;
+  label: string;
+}
