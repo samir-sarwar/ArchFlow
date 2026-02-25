@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
+import { useDiagramStore } from '@/stores/diagramStore';
 
 interface MermaidRendererProps {
   syntax: string;
@@ -15,10 +16,12 @@ export function MermaidRenderer({
   const [svg, setSvg] = useState<string>('');
   const [isRendering, setIsRendering] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const setRenderedSvg = useDiagramStore((s) => s.setRenderedSvg);
 
   const renderDiagram = useCallback(async () => {
     if (!syntax) {
       setSvg('');
+      setRenderedSvg('');
       return;
     }
 
@@ -29,13 +32,15 @@ export function MermaidRenderer({
 
       const { svg: renderedSvg } = await mermaid.render('diagram', syntax);
       setSvg(renderedSvg);
+      setRenderedSvg(renderedSvg);
       onRenderComplete?.();
     } catch (error) {
+      setRenderedSvg('');
       onError?.(error as Error);
     } finally {
       setIsRendering(false);
     }
-  }, [syntax, onRenderComplete, onError]);
+  }, [syntax, onRenderComplete, onError, setRenderedSvg]);
 
   useEffect(() => {
     renderDiagram();

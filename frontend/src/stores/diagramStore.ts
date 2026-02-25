@@ -5,6 +5,7 @@ const MAX_HISTORY = 10;
 
 interface DiagramStore {
   currentSyntax: string;
+  renderedSvg: string;
   history: DiagramVersion[];
   historyIndex: number;
   mode: EditorMode;
@@ -15,10 +16,12 @@ interface DiagramStore {
   redo: () => void;
   switchMode: (mode: EditorMode) => void;
   clearDiagram: () => void;
+  setRenderedSvg: (svg: string) => void;
 }
 
 export const useDiagramStore = create<DiagramStore>((set, get) => ({
   currentSyntax: '',
+  renderedSvg: '',
   history: [],
   historyIndex: -1,
   mode: 'voice',
@@ -74,5 +77,7 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   switchMode: (mode) => set({ mode }),
 
   clearDiagram: () =>
-    set({ currentSyntax: '', history: [], historyIndex: -1 }),
+    set({ currentSyntax: '', renderedSvg: '', history: [], historyIndex: -1 }),
+
+  setRenderedSvg: (svg) => set({ renderedSvg: svg }),
 }));
