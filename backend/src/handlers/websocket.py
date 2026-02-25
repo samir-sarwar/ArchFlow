@@ -14,7 +14,7 @@ from src.agents import (
 from src.models import Message
 from src.services.bedrock_client import BedrockClient
 from src.services.state_manager import ConversationStateManager
-from src.utils import logger
+from src.utils import SessionExpiredError, SessionNotFoundError, logger
 
 state_manager = ConversationStateManager()
 api_gateway = boto3.client(
@@ -91,6 +91,12 @@ def handle_message(event, connection_id):
     if action == "voice":
         return _handle_voice_message(body, connection_id, session_id)
 
+    if action == "sync_diagram":
+        return _handle_sync_diagram(body, connection_id, session_id)
+
+    if action == "restore_session":
+        return _handle_restore_session(body, connection_id, session_id)
+
     if action == "file_uploaded":
         return _handle_file_uploaded(body, connection_id, session_id)
 
@@ -100,6 +106,7 @@ def handle_message(event, connection_id):
 def _handle_text_message(body, connection_id, session_id):
     """Handle a text chat message."""
     text = body.get("text", "")
+    current_diagram = body.get("currentDiagram")
 
     if not text:
         _send_to_client(connection_id, {
@@ -111,7 +118,7 @@ def _handle_text_message(body, connection_id, session_id):
     loop = asyncio.new_event_loop()
     try:
         response = loop.run_until_complete(
-            _process_message(session_id, text)
+            _process_message(session_id, text, current_diagram=current_diagram)
         )
     finally:
         loop.close()
@@ -139,6 +146,7 @@ def _handle_voice_message(body, connection_id, session_id):
     from src.services.voice_handler import process_voice_stream
 
     audio_b64 = body.get("audio", "")
+    current_diagram = body.get("currentDiagram")
     if not audio_b64:
         _send_to_client(connection_id, {
             "type": "error",
@@ -169,7 +177,7 @@ def _handle_voice_message(body, connection_id, session_id):
     loop = asyncio.new_event_loop()
     try:
         response = loop.run_until_complete(
-            _process_message(session_id, transcription)
+            _process_message(session_id, transcription, current_diagram=current_diagram)
         )
     finally:
         loop.close()
@@ -192,7 +200,65 @@ def _handle_voice_message(body, connection_id, session_id):
     return {"statusCode": 200}
 
 
-async def _process_message(session_id: str | None, text: str) -> dict:
+def _handle_sync_diagram(body, connection_id, session_id):
+    """Handle a diagram sync from the manual editor."""
+    syntax = body.get("syntax", "")
+    if not session_id or not syntax:
+        return {"statusCode": 400}
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            state_manager.save_diagram_version(
+                session_id, syntax, description="Manual edit"
+            )
+        )
+    finally:
+        loop.close()
+
+    return {"statusCode": 200}
+
+
+def _handle_restore_session(body, connection_id, session_id):
+    """Restore a previous session: return full state to client."""
+    if not session_id:
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "No sessionId provided for restore."},
+        })
+        return {"statusCode": 400}
+
+    loop = asyncio.new_event_loop()
+    try:
+        context = loop.run_until_complete(
+            state_manager.get_session(session_id)
+        )
+    except (SessionNotFoundError, SessionExpiredError):
+        _send_to_client(connection_id, {
+            "type": "session_expired",
+            "payload": {"message": "Session not found or expired."},
+        })
+        return {"statusCode": 200}
+    finally:
+        loop.close()
+
+    _send_to_client(connection_id, {
+        "type": "session_restored",
+        "sessionId": session_id,
+        "payload": {
+            "messages": [m.model_dump() for m in context.messages],
+            "currentDiagram": context.current_diagram,
+            "diagramVersions": [v.model_dump() for v in context.diagram_versions],
+            "uploadedFiles": context.uploaded_files,
+        },
+    })
+
+    return {"statusCode": 200}
+
+
+async def _process_message(
+    session_id: str | None, text: str, current_diagram: str | None = None
+) -> dict:
     """Process a user message through the orchestrator."""
     # Get or create session
     if session_id:
@@ -200,6 +266,10 @@ async def _process_message(session_id: str | None, text: str) -> dict:
     else:
         session_id = await state_manager.create_session()
         context = await state_manager.get_session(session_id)
+
+    # Override backend diagram with frontend's version (manual edits safety net)
+    if current_diagram:
+        context.current_diagram = current_diagram
 
     # Add user message
     user_msg = Message(role="user", content=text)

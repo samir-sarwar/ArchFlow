@@ -1,7 +1,10 @@
 import { VoiceInterface } from '@/components/VoiceInterface';
 import { DiagramCanvas } from '@/components/DiagramCanvas';
+import { useDiagramSync } from '@/hooks/useDiagramSync';
 
 export default function App() {
+  useDiagramSync();
+
   return (
     <div className="flex h-screen bg-gray-50">
       {/* Left Panel - Conversation */}
