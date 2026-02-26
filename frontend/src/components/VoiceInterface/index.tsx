@@ -9,7 +9,7 @@ import { useUIStore } from '@/stores/uiStore';
 export function VoiceInterface() {
   const [input, setInput] = useState('');
   const [showUpload, setShowUpload] = useState(false);
-  const { sendMessage, sendWsMessage, isConnected } = useConversation();
+  const { sendMessage, sendWsMessage, stopAudioPlayback, isConnected } = useConversation();
   const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
   const isLoading = useUIStore((s) => s.isLoading);
 
@@ -26,7 +26,7 @@ export function VoiceInterface() {
 
   return (
     <>
-      <ConversationDisplay />
+      <ConversationDisplay onStopAudio={stopAudioPlayback} />
 
       {/* File upload section */}
       <div className="px-4 py-2 border-t border-gray-100">

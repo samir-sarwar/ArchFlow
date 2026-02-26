@@ -5,6 +5,7 @@ interface ConversationStore {
   sessionId: string | null;
   messages: Message[];
   isRecording: boolean;
+  isAudioPlaying: boolean;
   currentTranscript: string;
   _wsSend: ((msg: unknown) => void) | null;
   _isConnected: boolean;
@@ -13,6 +14,7 @@ interface ConversationStore {
   addMessage: (message: Message) => void;
   updateLastUserMessage: (content: string) => void;
   setRecording: (isRecording: boolean) => void;
+  setAudioPlaying: (playing: boolean) => void;
   setTranscript: (transcript: string) => void;
   clearMessages: () => void;
   setWsSend: (fn: (msg: unknown) => void) => void;
@@ -24,6 +26,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
   sessionId: localStorage.getItem('archflow_sessionId'),
   messages: [],
   isRecording: false,
+  isAudioPlaying: false,
   currentTranscript: '',
   _wsSend: null,
   _isConnected: false,
@@ -49,6 +52,8 @@ export const useConversationStore = create<ConversationStore>((set) => ({
     }),
 
   setRecording: (isRecording) => set({ isRecording }),
+
+  setAudioPlaying: (playing) => set({ isAudioPlaying: playing }),
 
   setTranscript: (transcript) => set({ currentTranscript: transcript }),
 

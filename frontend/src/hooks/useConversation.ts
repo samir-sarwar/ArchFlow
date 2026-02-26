@@ -1,8 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
+import { createChunkPlayer, type AudioChunkPlayer } from '@/services/audio';
 import type { Message } from '@/types/conversation';
 
 const WS_URL = import.meta.env.VITE_WEBSOCKET_URL || '';
@@ -13,6 +14,14 @@ export function useConversation() {
   const updateDiagram = useDiagramStore((s) => s.updateDiagram);
   const restoreDiagram = useDiagramStore((s) => s.restoreDiagram);
   const { setLoading, setError } = useUIStore();
+  const chunkPlayerRef = useRef<AudioChunkPlayer | null>(null);
+
+  // Cleanup audio player on unmount
+  useEffect(() => {
+    return () => {
+      chunkPlayerRef.current?.stop();
+    };
+  }, []);
 
   // Share WebSocket send function and connection state via store
   useEffect(() => {
@@ -68,8 +77,24 @@ export function useConversation() {
           updateDiagram(data.payload.diagram, data.payload.text);
         }
 
+        // Prepare audio player if response includes audio
+        if (data.payload.hasAudio) {
+          chunkPlayerRef.current?.stop();
+          chunkPlayerRef.current = createChunkPlayer(24000, (playing) => {
+            conversationStore.setAudioPlaying(playing);
+          });
+        }
+
         setLoading(false);
         setError(null);
+      }
+
+      if (data.type === 'audio_chunk') {
+        chunkPlayerRef.current?.addChunk(data.payload.audio);
+      }
+
+      if (data.type === 'audio_end') {
+        chunkPlayerRef.current?.finish();
       }
 
       if (data.type === 'session_restored') {
@@ -189,6 +214,10 @@ export function useConversation() {
     setError(null);
   };
 
+  const stopAudioPlayback = () => {
+    chunkPlayerRef.current?.stop();
+  };
+
   return {
     messages: conversationStore.messages,
     sessionId: conversationStore.sessionId,
@@ -196,6 +225,7 @@ export function useConversation() {
     isConnected,
     sendMessage,
     sendVoiceMessage,
+    stopAudioPlayback,
     sendWsMessage: wsSend,
   };
 }

@@ -1,8 +1,12 @@
 import { useConversationStore } from '@/stores/conversationStore';
 import { useUIStore } from '@/stores/uiStore';
 
-export function ConversationDisplay() {
-  const { messages, currentTranscript } = useConversationStore();
+interface ConversationDisplayProps {
+  onStopAudio?: () => void;
+}
+
+export function ConversationDisplay({ onStopAudio }: ConversationDisplayProps) {
+  const { messages, currentTranscript, isAudioPlaying } = useConversationStore();
   const { isLoading, error } = useUIStore();
 
   return (
@@ -41,6 +45,38 @@ export function ConversationDisplay() {
           <div className="max-w-[80%] rounded-lg px-3 py-2 text-sm bg-primary-100 text-primary-700 italic">
             {currentTranscript}...
           </div>
+        </div>
+      )}
+
+      {isAudioPlaying && (
+        <div className="flex justify-start">
+          <button
+            onClick={onStopAudio}
+            className="rounded-lg px-3 py-2 text-sm bg-blue-50 text-blue-600 flex items-center gap-2 hover:bg-blue-100 transition-colors cursor-pointer"
+            title="Click to stop audio"
+          >
+            <span className="inline-flex gap-0.5">
+              <span className="w-1 h-3 bg-blue-500 rounded-full animate-pulse" />
+              <span className="w-1 h-4 bg-blue-500 rounded-full animate-pulse [animation-delay:150ms]" />
+              <span className="w-1 h-2 bg-blue-500 rounded-full animate-pulse [animation-delay:300ms]" />
+            </span>
+            Speaking...
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="opacity-50"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
       )}
 
