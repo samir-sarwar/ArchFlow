@@ -6,9 +6,10 @@ from src.services.bedrock_client import BedrockClient
 from src.utils import logger
 
 VOICE_SYSTEM_PROMPT = (
-    "You are a helpful architecture design assistant. "
-    "The user will speak to you about software architecture. "
-    "Listen carefully and transcribe what they say accurately."
+    "You are ArchFlow, a helpful software architecture design assistant. "
+    "The user is speaking to you about software architecture. "
+    "Listen carefully and respond with clear, concise architectural guidance. "
+    "When discussing diagrams, describe components and relationships clearly."
 )
 
 
@@ -46,11 +47,17 @@ async def process_voice_stream(audio_webm: bytes, session_id: str) -> dict:
     )
 
     logger.info(
-        "Transcription complete",
+        "Voice processing complete",
         extra={
             "session_id": session_id,
             "transcription_length": len(result.get("transcription", "")),
+            "response_length": len(result.get("response_text", "")),
+            "audio_chunks": len(result.get("audio_chunks", [])),
         },
     )
 
-    return {"transcription": result["transcription"]}
+    return {
+        "transcription": result["transcription"],
+        "response_text": result.get("response_text", ""),
+        "audio_chunks": result.get("audio_chunks", []),
+    }

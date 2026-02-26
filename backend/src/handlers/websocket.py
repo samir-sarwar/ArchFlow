@@ -141,7 +141,12 @@ def _handle_text_message(body, connection_id, session_id):
 
 
 def _handle_voice_message(body, connection_id, session_id):
-    """Handle a voice message: transcribe audio then route through orchestrator."""
+    """Handle a voice message via Nova Sonic bidirectional streaming.
+
+    Uses Nova Sonic end-to-end: STT + AI response + audio output in one call.
+    Audio chunks are streamed as separate WebSocket messages to stay under
+    the API Gateway 128KB frame limit.
+    """
     import base64
     from src.services.voice_handler import process_voice_stream
 
@@ -156,7 +161,7 @@ def _handle_voice_message(body, connection_id, session_id):
 
     audio_bytes = base64.b64decode(audio_b64)
 
-    # Step 1: Transcribe audio via Nova Sonic
+    # Nova Sonic handles STT + response + TTS in one bidirectional stream
     loop = asyncio.new_event_loop()
     try:
         voice_result = loop.run_until_complete(
@@ -166,6 +171,9 @@ def _handle_voice_message(body, connection_id, session_id):
         loop.close()
 
     transcription = voice_result.get("transcription", "")
+    response_text = voice_result.get("response_text", "")
+    audio_chunks = voice_result.get("audio_chunks", [])
+
     if not transcription:
         _send_to_client(connection_id, {
             "type": "error",
@@ -173,31 +181,141 @@ def _handle_voice_message(body, connection_id, session_id):
         })
         return {"statusCode": 400}
 
-    # Step 2: Route transcription through existing orchestrator pipeline
-    loop = asyncio.new_event_loop()
-    try:
-        response = loop.run_until_complete(
-            _process_message(session_id, transcription, current_diagram=current_diagram)
-        )
-    finally:
-        loop.close()
+    # Save messages to conversation state
+    if session_id:
+        loop = asyncio.new_event_loop()
+        try:
+            user_msg = Message(role="user", content=transcription)
+            loop.run_until_complete(state_manager.add_message(session_id, user_msg))
+            assistant_msg = Message(
+                role="assistant", content=response_text, agent="nova_sonic"
+            )
+            loop.run_until_complete(
+                state_manager.add_message(session_id, assistant_msg)
+            )
+        finally:
+            loop.close()
 
-    response_payload = {
+    # Split any oversized base64 chunks to stay under WS frame limit
+    safe_chunks = _split_large_chunks(audio_chunks)
+
+    # Send the main ai_response (text only — audio follows as separate messages)
+    _send_to_client(connection_id, {
         "type": "ai_response",
-        "sessionId": response["session_id"],
+        "sessionId": session_id,
         "payload": {
-            "text": response["text"],
-            "agent": response["agent"],
+            "text": response_text,
+            "agent": "nova_sonic",
             "transcription": transcription,
+            "hasAudio": len(safe_chunks) > 0,
+            "audioChunkCount": len(safe_chunks),
         },
-    }
+    })
 
-    if response.get("diagram"):
-        response_payload["payload"]["diagram"] = response["diagram"]
+    # Stream audio chunks as separate WebSocket messages
+    for i, chunk in enumerate(safe_chunks):
+        _send_to_client(connection_id, {
+            "type": "audio_chunk",
+            "sessionId": session_id,
+            "payload": {
+                "index": i,
+                "total": len(safe_chunks),
+                "audio": chunk,
+                "sampleRate": 24000,
+                "bitDepth": 16,
+                "channels": 1,
+            },
+        })
 
-    _send_to_client(connection_id, response_payload)
+    # Signal end of audio stream
+    _send_to_client(connection_id, {
+        "type": "audio_end",
+        "sessionId": session_id,
+        "payload": {"totalChunks": len(safe_chunks)},
+    })
+
+    # Post-process: check if response warrants a diagram update
+    _post_process_voice_diagram(
+        response_text, connection_id, session_id, current_diagram
+    )
 
     return {"statusCode": 200}
+
+
+_MAX_CHUNK_SIZE = 100_000  # 100KB base64 safety limit per WebSocket frame
+
+
+def _split_large_chunks(chunks: list[str], max_size: int = _MAX_CHUNK_SIZE) -> list[str]:
+    """Split any oversized base64 audio chunks to stay under WS frame limits."""
+    result = []
+    for chunk in chunks:
+        while len(chunk) > max_size:
+            result.append(chunk[:max_size])
+            chunk = chunk[max_size:]
+        if chunk:
+            result.append(chunk)
+    return result
+
+
+def _post_process_voice_diagram(
+    response_text: str, connection_id: str, session_id: str | None, current_diagram: str | None
+):
+    """Check if a voice response mentions architecture and generate a diagram update."""
+    if not response_text or not session_id:
+        return
+
+    # Simple keyword check to avoid unnecessary Bedrock calls
+    diagram_keywords = [
+        "component", "service", "database", "api", "layer", "module",
+        "microservice", "architecture", "diagram", "flow", "system",
+    ]
+    text_lower = response_text.lower()
+    if not any(kw in text_lower for kw in diagram_keywords):
+        return
+
+    logger.info("Voice response may warrant diagram update, routing to generator")
+
+    diagram_prompt = (
+        f"Based on this architecture discussion, update or create a Mermaid diagram.\n\n"
+        f"Discussion:\n{response_text}\n\n"
+    )
+    if current_diagram:
+        diagram_prompt += f"Current diagram:\n```mermaid\n{current_diagram}\n```\n\n"
+    diagram_prompt += (
+        "Output ONLY valid Mermaid.js syntax. "
+        "Do not wrap in code fences. Do not include any explanation."
+    )
+
+    loop = asyncio.new_event_loop()
+    try:
+        raw = loop.run_until_complete(
+            bedrock.invoke_lite(prompt=diagram_prompt)
+        )
+
+        # Strip code fences if the model adds them
+        cleaned = raw.strip()
+        if cleaned.startswith("```mermaid"):
+            cleaned = cleaned[len("```mermaid"):].strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:].strip()
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3].strip()
+
+        if cleaned:
+            loop.run_until_complete(
+                state_manager.save_diagram_version(
+                    session_id, cleaned, description="Generated from voice"
+                )
+            )
+            _send_to_client(connection_id, {
+                "type": "diagram_update",
+                "sessionId": session_id,
+                "payload": {"diagram": cleaned},
+            })
+    except Exception:
+        logger.error("Diagram post-processing failed", exc_info=True)
+    finally:
+        loop.close()
 
 
 def _handle_sync_diagram(body, connection_id, session_id):

@@ -11,6 +11,8 @@ Parameters:
 Globals:
   Function:
     Runtime: python3.12
+    Architectures:
+      - arm64
     Timeout: 60
     MemorySize: 1024
     Tracing: Active
@@ -20,9 +22,9 @@ Globals:
         CONVERSATION_TABLE_NAME: !Ref ConversationsTable
         UPLOADS_BUCKET: !Ref UploadsBucket
         EXPORTS_BUCKET: !Ref ExportsBucket
-        BEDROCK_MODEL_PRO: us.amazon.nova-pro-v1:0
-        BEDROCK_MODEL_LITE: us.amazon.nova-lite-v1:0
-        BEDROCK_MODEL_SONIC: us.amazon.nova-sonic-v2:0
+        BEDROCK_MODEL_PRO: amazon.nova-pro-v1:0
+        BEDROCK_MODEL_LITE: amazon.nova-lite-v1:0
+        BEDROCK_MODEL_SONIC: amazon.nova-sonic-v1:0
         LOG_LEVEL: INFO
 
 Resources:
