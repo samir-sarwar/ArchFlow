@@ -163,6 +163,7 @@ class BedrockClient:
 
         user_texts = []
         assistant_texts = []
+        audio_chunks = []
         current_role = None
 
         async def _collect_responses():
@@ -189,6 +190,11 @@ class BedrockClient:
                                 user_texts.append(text)
                             elif current_role == "ASSISTANT":
                                 assistant_texts.append(text)
+
+                        elif "audioOutput" in evt:
+                            audio_b64 = evt["audioOutput"].get("content", "")
+                            if audio_b64:
+                                audio_chunks.append(audio_b64)
 
                         elif "completionEnd" in evt:
                             break
@@ -340,4 +346,8 @@ class BedrockClient:
             },
         )
 
-        return {"transcription": transcription, "response_text": response_text}
+        return {
+            "transcription": transcription,
+            "response_text": response_text,
+            "audio_chunks": audio_chunks,
+        }

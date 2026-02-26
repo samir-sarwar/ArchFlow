@@ -1,5 +1,6 @@
 export type WebSocketMessageType =
   | 'audio_chunk'
+  | 'audio_end'
   | 'transcription'
   | 'ai_response'
   | 'diagram_update'
@@ -14,6 +15,19 @@ export interface WebSocketMessage {
     diagram?: string;
     error?: string;
   };
+}
+
+export interface AudioChunkPayload {
+  index: number;
+  total: number;
+  audio: string; // base64 LPCM
+  sampleRate: number;
+  bitDepth: number;
+  channels: number;
+}
+
+export interface AudioEndPayload {
+  totalChunks: number;
 }
 
 export interface UploadResponse {
