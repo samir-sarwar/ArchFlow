@@ -5,10 +5,37 @@ import { DiagramControls } from './DiagramControls';
 import { ExportMenu } from './ExportMenu';
 import { Canvas, ElementLibrary } from '@/components/ManualEditor';
 import { useDiagramStore } from '@/stores/diagramStore';
+import { useConversationStore } from '@/stores/conversationStore';
+import { useUIStore } from '@/stores/uiStore';
 
 export function DiagramCanvas() {
   const currentSyntax = useDiagramStore((s) => s.currentSyntax);
   const mode = useDiagramStore((s) => s.mode);
+
+  const sessionId = useConversationStore((s) => s.sessionId);
+  const addMessage = useConversationStore((s) => s.addMessage);
+  const wsSend = useConversationStore((s) => s._wsSend);
+  const setLoading = useUIStore((s) => s.setLoading);
+
+  const handleAskToFix = (errorMessage: string) => {
+    if (!wsSend) return;
+    const fixRequest = `The diagram has a syntax error: "${errorMessage}". Please fix the Mermaid syntax and return a corrected diagram.`;
+
+    addMessage({
+      role: 'user',
+      content: fixRequest,
+      timestamp: new Date().toISOString(),
+    });
+
+    wsSend({
+      action: 'message',
+      sessionId,
+      text: fixRequest,
+      currentDiagram: currentSyntax || undefined,
+    });
+
+    setLoading(true);
+  };
 
   return (
     <>
@@ -28,7 +55,10 @@ export function DiagramCanvas() {
           </DndProvider>
         ) : (
           <div className="flex-1 overflow-auto p-4">
-            <MermaidRenderer syntax={currentSyntax} />
+            <MermaidRenderer
+              syntax={currentSyntax}
+              onAskToFix={handleAskToFix}
+            />
           </div>
         )}
       </div>
