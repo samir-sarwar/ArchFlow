@@ -57,12 +57,13 @@ def lambda_handler(event, context):
             return {"statusCode": 400, "body": "Unknown route"}
     except Exception as e:
         logger.error("WebSocket handler error", exc_info=True)
-        # Send error back to client before returning
-        _send_to_client(connection_id, {
-            "type": "error",
-            "payload": {"message": "Something went wrong. Please try again."},
-        })
-        return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
+        return {
+            "statusCode": 500,
+            "body": json.dumps({
+                "type": "error",
+                "payload": {"message": "Something went wrong. Please try again."},
+            }),
+        }
 
 
 def handle_connect(event, connection_id):
@@ -106,19 +107,17 @@ def handle_message(event, connection_id):
 def _handle_text_message(body, connection_id, session_id):
     """Handle a text chat message."""
     text = body.get("text", "")
-    current_diagram = body.get("currentDiagram")
 
     if not text:
-        _send_to_client(connection_id, {
+        return {"statusCode": 400, "body": json.dumps({
             "type": "error",
             "payload": {"message": "No text provided."},
-        })
-        return {"statusCode": 400}
+        })}
 
     loop = asyncio.new_event_loop()
     try:
         response = loop.run_until_complete(
-            _process_message(session_id, text, current_diagram=current_diagram)
+            _process_message(session_id, text, current_diagram=body.get("currentDiagram"))
         )
     finally:
         loop.close()
@@ -135,9 +134,7 @@ def _handle_text_message(body, connection_id, session_id):
     if response.get("diagram"):
         response_payload["payload"]["diagram"] = response["diagram"]
 
-    _send_to_client(connection_id, response_payload)
-
-    return {"statusCode": 200}
+    return {"statusCode": 200, "body": json.dumps(response_payload)}
 
 
 def _handle_voice_message(body, connection_id, session_id):
@@ -151,13 +148,11 @@ def _handle_voice_message(body, connection_id, session_id):
     from src.services.voice_handler import process_voice_stream
 
     audio_b64 = body.get("audio", "")
-    current_diagram = body.get("currentDiagram")
     if not audio_b64:
-        _send_to_client(connection_id, {
+        return {"statusCode": 400, "body": json.dumps({
             "type": "error",
             "payload": {"message": "No audio data provided."},
-        })
-        return {"statusCode": 400}
+        })}
 
     audio_bytes = base64.b64decode(audio_b64)
 
@@ -172,14 +167,13 @@ def _handle_voice_message(body, connection_id, session_id):
 
     transcription = voice_result.get("transcription", "")
     response_text = voice_result.get("response_text", "")
-    audio_chunks = voice_result.get("audio_chunks", [])
+    # audio_chunks omitted — streaming not supported with route response
 
     if not transcription:
-        _send_to_client(connection_id, {
+        return {"statusCode": 400, "body": json.dumps({
             "type": "error",
             "payload": {"message": "Could not transcribe audio. Please try again."},
-        })
-        return {"statusCode": 400}
+        })}
 
     # Save messages to conversation state
     if session_id:
@@ -196,50 +190,19 @@ def _handle_voice_message(body, connection_id, session_id):
         finally:
             loop.close()
 
-    # Split any oversized base64 chunks to stay under WS frame limit
-    safe_chunks = _split_large_chunks(audio_chunks)
-
-    # Send the main ai_response (text only — audio follows as separate messages)
-    _send_to_client(connection_id, {
+    # Return the main ai_response via route response body
+    # Note: audio streaming not supported with route response (single message only)
+    return {"statusCode": 200, "body": json.dumps({
         "type": "ai_response",
         "sessionId": session_id,
         "payload": {
             "text": response_text,
             "agent": "nova_sonic",
             "transcription": transcription,
-            "hasAudio": len(safe_chunks) > 0,
-            "audioChunkCount": len(safe_chunks),
+            "hasAudio": False,
+            "audioChunkCount": 0,
         },
-    })
-
-    # Stream audio chunks as separate WebSocket messages
-    for i, chunk in enumerate(safe_chunks):
-        _send_to_client(connection_id, {
-            "type": "audio_chunk",
-            "sessionId": session_id,
-            "payload": {
-                "index": i,
-                "total": len(safe_chunks),
-                "audio": chunk,
-                "sampleRate": 24000,
-                "bitDepth": 16,
-                "channels": 1,
-            },
-        })
-
-    # Signal end of audio stream
-    _send_to_client(connection_id, {
-        "type": "audio_end",
-        "sessionId": session_id,
-        "payload": {"totalChunks": len(safe_chunks)},
-    })
-
-    # Post-process: check if response warrants a diagram update
-    _post_process_voice_diagram(
-        response_text, connection_id, session_id, current_diagram
-    )
-
-    return {"statusCode": 200}
+    })}
 
 
 _MAX_CHUNK_SIZE = 100_000  # 100KB base64 safety limit per WebSocket frame
@@ -340,11 +303,10 @@ def _handle_sync_diagram(body, connection_id, session_id):
 def _handle_restore_session(body, connection_id, session_id):
     """Restore a previous session: return full state to client."""
     if not session_id:
-        _send_to_client(connection_id, {
+        return {"statusCode": 400, "body": json.dumps({
             "type": "error",
             "payload": {"message": "No sessionId provided for restore."},
-        })
-        return {"statusCode": 400}
+        })}
 
     loop = asyncio.new_event_loop()
     try:
@@ -352,15 +314,14 @@ def _handle_restore_session(body, connection_id, session_id):
             state_manager.get_session(session_id)
         )
     except (SessionNotFoundError, SessionExpiredError):
-        _send_to_client(connection_id, {
+        return {"statusCode": 200, "body": json.dumps({
             "type": "session_expired",
             "payload": {"message": "Session not found or expired."},
-        })
-        return {"statusCode": 200}
+        })}
     finally:
         loop.close()
 
-    _send_to_client(connection_id, {
+    return {"statusCode": 200, "body": json.dumps({
         "type": "session_restored",
         "sessionId": session_id,
         "payload": {
@@ -369,9 +330,7 @@ def _handle_restore_session(body, connection_id, session_id):
             "diagramVersions": [v.model_dump() for v in context.diagram_versions],
             "uploadedFiles": context.uploaded_files,
         },
-    })
-
-    return {"statusCode": 200}
+    })}
 
 
 async def _process_message(
@@ -422,18 +381,10 @@ def _handle_file_uploaded(body, connection_id, session_id):
     content_type = body.get("contentType", "")
 
     if not file_key or not session_id:
-        _send_to_client(connection_id, {
+        return {"statusCode": 400, "body": json.dumps({
             "type": "error",
             "payload": {"message": "Missing fileKey or sessionId."},
-        })
-        return {"statusCode": 400}
-
-    # Send processing status immediately
-    _send_to_client(connection_id, {
-        "type": "file_status",
-        "sessionId": session_id,
-        "payload": {"fileKey": file_key, "status": "processing"},
-    })
+        })}
 
     loop = asyncio.new_event_loop()
     try:
@@ -442,7 +393,7 @@ def _handle_file_uploaded(body, connection_id, session_id):
         )
     except Exception as e:
         logger.error("File processing error", exc_info=True)
-        _send_to_client(connection_id, {
+        return {"statusCode": 500, "body": json.dumps({
             "type": "file_status",
             "sessionId": session_id,
             "payload": {
@@ -450,13 +401,11 @@ def _handle_file_uploaded(body, connection_id, session_id):
                 "status": "error",
                 "message": str(e),
             },
-        })
-        return {"statusCode": 500}
+        })}
     finally:
         loop.close()
 
-    # Send analysis result back
-    _send_to_client(connection_id, {
+    response_payload = {
         "type": "file_analysis",
         "sessionId": session_id,
         "payload": {
@@ -466,17 +415,13 @@ def _handle_file_uploaded(body, connection_id, session_id):
             "analysis": result.get("analysis", {}),
             "summary": result.get("summary", ""),
         },
-    })
+    }
 
-    # If analysis produced a diagram, send that too
+    # Include diagram in the same response if analysis produced one
     if result.get("diagram"):
-        _send_to_client(connection_id, {
-            "type": "diagram_update",
-            "sessionId": session_id,
-            "payload": {"diagram": result["diagram"]},
-        })
+        response_payload["payload"]["diagram"] = result["diagram"]
 
-    return {"statusCode": 200}
+    return {"statusCode": 200, "body": json.dumps(response_payload)}
 
 
 async def _process_uploaded_file(session_id, file_key, file_name, content_type):
