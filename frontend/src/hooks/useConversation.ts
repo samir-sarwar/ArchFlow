@@ -144,11 +144,19 @@ export function useConversation() {
         setLoading(false);
       }
 
+      if (data.type === 'diagram_update') {
+        if (data.payload?.diagram) {
+          updateDiagram(data.payload.diagram, 'Diagram update');
+        }
+      }
+
       if (data.type === 'error') {
+        console.error('[ArchFlow] Backend error:', data.payload);
         setError(data.payload.message);
         setLoading(false);
       }
-    } catch {
+    } catch (err) {
+      console.error('[ArchFlow] Failed to handle WebSocket message:', err, lastMessage?.data);
       setError('Failed to parse server response');
       setLoading(false);
     }

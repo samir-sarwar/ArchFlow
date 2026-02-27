@@ -4,6 +4,10 @@ export type WebSocketMessageType =
   | 'transcription'
   | 'ai_response'
   | 'diagram_update'
+  | 'session_restored'
+  | 'session_expired'
+  | 'file_status'
+  | 'file_analysis'
   | 'error';
 
 export interface WebSocketMessage {
