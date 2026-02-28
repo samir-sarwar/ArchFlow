@@ -2,7 +2,9 @@ export async function validateMermaidSyntax(
   syntax: string,
 ): Promise<{ valid: boolean; error?: string }> {
   try {
-    const mermaid = (await import('mermaid')).default;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mermaid = (window as any).mermaid;
+    if (!mermaid) throw new Error('Mermaid not loaded');
     mermaid.initialize({ startOnLoad: false });
     await mermaid.parse(syntax);
     return { valid: true };

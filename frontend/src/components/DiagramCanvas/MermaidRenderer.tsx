@@ -32,7 +32,9 @@ export function MermaidRenderer({
 
     setIsRendering(true);
     try {
-      const mermaid = (await import('mermaid')).default;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mermaid = (window as any).mermaid;
+      if (!mermaid) throw new Error('Mermaid not loaded');
       mermaid.initialize({ startOnLoad: false, theme: 'default' });
 
       // Pre-validate with mermaid.parse() for clean error messages
