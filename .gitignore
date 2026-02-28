@@ -33,6 +33,9 @@ frontend/dist/
 .aws-sam/
 samconfig.toml.bak
 
+# Lambda layers (large binaries)
+backend/layers/ffmpeg/bin/
+
 # IDE
 .vscode/
 .idea/
