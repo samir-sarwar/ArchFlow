@@ -1,5 +1,6 @@
 from src.models import AgentResponse, ConversationContext
 from src.services.bedrock_client import BedrockClient
+from src.services.diagram_validator import validate_mermaid_syntax
 from src.utils import logger
 
 DIAGRAM_GENERATOR_PROMPT = """
@@ -69,6 +70,34 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
             cleaned = cleaned[3:].strip()
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3].strip()
+
+        # Validate and retry once if invalid
+        state = validate_mermaid_syntax(cleaned)
+        if not state.is_valid:
+            logger.warning(
+                "Generated diagram failed validation, retrying once",
+                extra={"error": state.error_message, "session_id": context.session_id},
+            )
+            retry_prompt = (
+                f"The Mermaid syntax you generated has this error: {state.error_message}. "
+                f"Fix it and return ONLY valid Mermaid syntax — no explanation, no code fences.\n\n"
+                f"Broken syntax:\n{cleaned}"
+            )
+            try:
+                raw_retry = await self.bedrock.invoke_lite(
+                    prompt=retry_prompt,
+                    system_prompt=self.system_prompt,
+                )
+                retried = raw_retry.strip()
+                if retried.startswith("```mermaid"):
+                    retried = retried[len("```mermaid"):].strip()
+                if retried.startswith("```"):
+                    retried = retried[3:].strip()
+                if retried.endswith("```"):
+                    retried = retried[:-3].strip()
+                cleaned = retried
+            except Exception:
+                logger.warning("Diagram retry failed, using original output", exc_info=True)
 
         return AgentResponse(
             text="I've updated the diagram based on your requirements.",
