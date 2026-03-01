@@ -110,7 +110,7 @@ def _handle_text_message(body, connection_id, session_id):
     text = body.get("text", "")
 
     if not text:
-        return {"statusCode": 400, "body": json.dumps({
+        return {"statusCode": 200, "body": json.dumps({
             "type": "error",
             "payload": {"message": "No text provided."},
         })}
@@ -120,6 +120,12 @@ def _handle_text_message(body, connection_id, session_id):
         response = loop.run_until_complete(
             _process_message(session_id, text, current_diagram=body.get("currentDiagram"))
         )
+    except Exception:
+        logger.error("Text message processing failed", exc_info=True)
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Failed to process your message. Please try again."},
+        })}
     finally:
         loop.close()
 
@@ -139,31 +145,75 @@ def _handle_text_message(body, connection_id, session_id):
 
 
 def _handle_voice_message(body, connection_id, session_id):
-    """Handle a voice message via Nova Sonic bidirectional streaming.
+    """Handle a voice message: download audio from S3, process via Nova Sonic.
 
-    Uses Nova Sonic end-to-end: STT + AI response + audio output in one call.
-    Audio chunks are streamed as separate WebSocket messages via
-    post_to_connection to stay under the API Gateway 128KB frame limit.
+    Audio is uploaded to S3 by the frontend via presigned URL, then a small
+    WebSocket message with the S3 key triggers this handler.  Responds via
+    Management API callback (`_send_to_client`) to bypass the 29s API Gateway
+    integration timeout — Nova Sonic can take 30-60s.
     """
-    import base64
     from src.services.voice_handler import process_voice_stream
 
-    audio_b64 = body.get("audio", "")
-    if not audio_b64:
+    audio_key = body.get("audioKey", "")
+    if not audio_key:
         _send_to_client(connection_id, {
             "type": "error",
-            "payload": {"message": "No audio data provided."},
+            "payload": {"message": "No audio key provided."},
         })
         return {"statusCode": 200}
 
-    audio_bytes = base64.b64decode(audio_b64)
+    # Download audio from S3
+    s3 = boto3.client("s3")
+    uploads_bucket = os.environ.get("UPLOADS_BUCKET", "")
+    try:
+        s3_response = s3.get_object(Bucket=uploads_bucket, Key=audio_key)
+        audio_bytes = s3_response["Body"].read()
+    except Exception:
+        logger.error("Failed to download voice audio from S3", exc_info=True)
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "Failed to retrieve voice audio."},
+        })
+        return {"statusCode": 200}
 
-    # Nova Sonic handles STT + response + TTS in one bidirectional stream
+    logger.info("Downloaded voice audio from S3",
+                extra={"key": audio_key, "size": len(audio_bytes)})
+
+    _send_to_client(connection_id, {
+        "type": "voice_status",
+        "payload": {"stage": "converting", "message": "Converting audio..."},
+    })
+
+    # Callback to stream transcription to client as Nova Sonic produces it
+    def _on_transcription(text: str):
+        _send_to_client(connection_id, {
+            "type": "voice_transcription",
+            "payload": {"text": text},
+        })
+
+    _send_to_client(connection_id, {
+        "type": "voice_status",
+        "payload": {"stage": "transcribing", "message": "Transcribing speech..."},
+    })
+
+    # Process via Nova Sonic (STT + response + TTS)
     loop = asyncio.new_event_loop()
     try:
         voice_result = loop.run_until_complete(
-            process_voice_stream(audio_bytes, session_id or "")
+            process_voice_stream(
+                audio_bytes,
+                session_id or "",
+                bedrock_client=bedrock,
+                on_transcription=_on_transcription,
+            )
         )
+    except Exception:
+        logger.error("Voice stream processing failed", exc_info=True)
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": "Voice processing failed. Please try again."},
+        })
+        return {"statusCode": 200}
     finally:
         loop.close()
 
@@ -171,10 +221,18 @@ def _handle_voice_message(body, connection_id, session_id):
     response_text = voice_result.get("response_text", "")
     audio_chunks = voice_result.get("audio_chunks", [])
 
+    # Check for structured errors from voice handler
+    if voice_result.get("error"):
+        _send_to_client(connection_id, {
+            "type": "error",
+            "payload": {"message": voice_result["error"]},
+        })
+        return {"statusCode": 200}
+
     if not transcription:
         _send_to_client(connection_id, {
             "type": "error",
-            "payload": {"message": "Could not transcribe audio. Please try again."},
+            "payload": {"message": "Could not transcribe audio. Please speak clearly and try again."},
         })
         return {"statusCode": 200}
 
@@ -195,7 +253,7 @@ def _handle_voice_message(body, connection_id, session_id):
 
     has_audio = len(audio_chunks) > 0
 
-    # Send the main AI response via post_to_connection (not route response)
+    # Send response via Management API callback (bypasses 29s route response timeout)
     _send_to_client(connection_id, {
         "type": "ai_response",
         "sessionId": session_id,
@@ -204,30 +262,32 @@ def _handle_voice_message(body, connection_id, session_id):
             "agent": "nova_sonic",
             "transcription": transcription,
             "hasAudio": has_audio,
-            "audioChunkCount": len(audio_chunks),
         },
     })
 
-    # Stream audio chunks to the client
+    # Stream audio chunks to client (frontend creates chunk player on hasAudio=True)
     if has_audio:
         safe_chunks = _split_large_chunks(audio_chunks)
         for chunk in safe_chunks:
             _send_to_client(connection_id, {
                 "type": "audio_chunk",
-                "sessionId": session_id,
-                "payload": {"audio": chunk, "sampleRate": 24000},
+                "payload": {"audio": chunk},
             })
-
         _send_to_client(connection_id, {
             "type": "audio_end",
-            "sessionId": session_id,
             "payload": {},
         })
+        logger.info("Sent audio response", extra={"chunk_count": len(safe_chunks)})
 
-    # Check if voice response warrants a diagram update
-    _post_process_voice_diagram(
-        response_text, connection_id, session_id, body.get("currentDiagram")
-    )
+    # Trigger diagram post-processing if response mentions architecture
+    current_diagram = body.get("currentDiagram")
+    _post_process_voice_diagram(response_text, connection_id, session_id, current_diagram)
+
+    # Clean up audio file from S3 (lifecycle rule handles stragglers)
+    try:
+        s3.delete_object(Bucket=uploads_bucket, Key=audio_key)
+    except Exception:
+        pass
 
     return {"statusCode": 200}
 
@@ -340,7 +400,7 @@ def _handle_sync_diagram(body, connection_id, session_id):
     """Handle a diagram sync from the manual editor."""
     syntax = body.get("syntax", "")
     if not session_id or not syntax:
-        return {"statusCode": 400}
+        return {"statusCode": 200, "body": json.dumps({"type": "ack"})}
 
     loop = asyncio.new_event_loop()
     try:
@@ -352,7 +412,7 @@ def _handle_sync_diagram(body, connection_id, session_id):
     finally:
         loop.close()
 
-    return {"statusCode": 200}
+    return {"statusCode": 200, "body": json.dumps({"type": "ack"})}
 
 
 def _handle_restore_session(body, connection_id, session_id):

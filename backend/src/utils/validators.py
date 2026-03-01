@@ -8,6 +8,9 @@ ALLOWED_FILE_TYPES = {
     "text/plain",
     "image/png",
     "image/jpeg",
+    "audio/webm",
+    "audio/ogg",
+    "audio/mp4",
 }
 SESSION_ID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
