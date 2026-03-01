@@ -13,6 +13,7 @@ from src.agents import (
 )
 from src.models import Message
 from src.services.bedrock_client import BedrockClient
+from src.services.diagram_validator import validate_mermaid_syntax
 from src.services.state_manager import ConversationStateManager
 from src.utils import SessionExpiredError, SessionNotFoundError, logger
 
@@ -141,18 +142,19 @@ def _handle_voice_message(body, connection_id, session_id):
     """Handle a voice message via Nova Sonic bidirectional streaming.
 
     Uses Nova Sonic end-to-end: STT + AI response + audio output in one call.
-    Audio chunks are streamed as separate WebSocket messages to stay under
-    the API Gateway 128KB frame limit.
+    Audio chunks are streamed as separate WebSocket messages via
+    post_to_connection to stay under the API Gateway 128KB frame limit.
     """
     import base64
     from src.services.voice_handler import process_voice_stream
 
     audio_b64 = body.get("audio", "")
     if not audio_b64:
-        return {"statusCode": 400, "body": json.dumps({
+        _send_to_client(connection_id, {
             "type": "error",
             "payload": {"message": "No audio data provided."},
-        })}
+        })
+        return {"statusCode": 200}
 
     audio_bytes = base64.b64decode(audio_b64)
 
@@ -167,13 +169,14 @@ def _handle_voice_message(body, connection_id, session_id):
 
     transcription = voice_result.get("transcription", "")
     response_text = voice_result.get("response_text", "")
-    # audio_chunks omitted — streaming not supported with route response
+    audio_chunks = voice_result.get("audio_chunks", [])
 
     if not transcription:
-        return {"statusCode": 400, "body": json.dumps({
+        _send_to_client(connection_id, {
             "type": "error",
             "payload": {"message": "Could not transcribe audio. Please try again."},
-        })}
+        })
+        return {"statusCode": 200}
 
     # Save messages to conversation state
     if session_id:
@@ -190,19 +193,43 @@ def _handle_voice_message(body, connection_id, session_id):
         finally:
             loop.close()
 
-    # Return the main ai_response via route response body
-    # Note: audio streaming not supported with route response (single message only)
-    return {"statusCode": 200, "body": json.dumps({
+    has_audio = len(audio_chunks) > 0
+
+    # Send the main AI response via post_to_connection (not route response)
+    _send_to_client(connection_id, {
         "type": "ai_response",
         "sessionId": session_id,
         "payload": {
             "text": response_text,
             "agent": "nova_sonic",
             "transcription": transcription,
-            "hasAudio": False,
-            "audioChunkCount": 0,
+            "hasAudio": has_audio,
+            "audioChunkCount": len(audio_chunks),
         },
-    })}
+    })
+
+    # Stream audio chunks to the client
+    if has_audio:
+        safe_chunks = _split_large_chunks(audio_chunks)
+        for chunk in safe_chunks:
+            _send_to_client(connection_id, {
+                "type": "audio_chunk",
+                "sessionId": session_id,
+                "payload": {"audio": chunk, "sampleRate": 24000},
+            })
+
+        _send_to_client(connection_id, {
+            "type": "audio_end",
+            "sessionId": session_id,
+            "payload": {},
+        })
+
+    # Check if voice response warrants a diagram update
+    _post_process_voice_diagram(
+        response_text, connection_id, session_id, body.get("currentDiagram")
+    )
+
+    return {"statusCode": 200}
 
 
 _MAX_CHUNK_SIZE = 100_000  # 100KB base64 safety limit per WebSocket frame
@@ -263,6 +290,34 @@ def _post_process_voice_diagram(
             cleaned = cleaned[3:].strip()
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3].strip()
+
+        # Validate and retry once if invalid
+        if cleaned:
+            state = validate_mermaid_syntax(cleaned)
+            if not state.is_valid:
+                logger.warning(
+                    "Voice diagram failed validation, retrying once",
+                    extra={"error": state.error_message},
+                )
+                retry_prompt = (
+                    f"The Mermaid syntax has this error: {state.error_message}. "
+                    f"Fix it and return ONLY valid Mermaid syntax — no explanation, no code fences.\n\n"
+                    f"Broken syntax:\n{cleaned}"
+                )
+                try:
+                    raw_retry = loop.run_until_complete(
+                        bedrock.invoke_lite(prompt=retry_prompt)
+                    )
+                    retried = raw_retry.strip()
+                    if retried.startswith("```mermaid"):
+                        retried = retried[len("```mermaid"):].strip()
+                    if retried.startswith("```"):
+                        retried = retried[3:].strip()
+                    if retried.endswith("```"):
+                        retried = retried[:-3].strip()
+                    cleaned = retried
+                except Exception:
+                    logger.warning("Voice diagram retry failed, using original", exc_info=True)
 
         if cleaned:
             loop.run_until_complete(
