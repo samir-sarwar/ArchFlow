@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useConversation } from '@/hooks/useConversation';
 import { useConversationStore } from '@/stores/conversationStore';
@@ -13,40 +13,69 @@ export function VoiceRecorder() {
   } = useConversation();
   const { setRecording } = useConversationStore();
   const isAudioPlaying = useConversationStore((s) => s.isAudioPlaying);
+  const voiceStatus = useConversationStore((s) => s.voiceStatus);
   const addNotification = useUIStore((s) => s.addNotification);
+  // Ref keeps mimeType current for the handleAutoStop callback closure
+  const mimeTypeRef = useRef('');
 
-  const handleAutoStop = useCallback(async (audioBlob: Blob) => {
-    addNotification('Recording stopped due to silence', 'info');
-    setRecording(false);
-    if (audioBlob.size > 0) {
-      await sendVoiceMessage(audioBlob);
+  // "Ready to listen" hint after AI finishes speaking
+  const [showReadyHint, setShowReadyHint] = useState(false);
+  const prevAudioPlayingRef = useRef(false);
+  useEffect(() => {
+    if (prevAudioPlayingRef.current && !isAudioPlaying) {
+      setShowReadyHint(true);
+      const timer = setTimeout(() => setShowReadyHint(false), 3000);
+      return () => clearTimeout(timer);
     }
-  }, [addNotification, setRecording, sendVoiceMessage]);
+    prevAudioPlayingRef.current = isAudioPlaying;
+  }, [isAudioPlaying]);
 
   const {
     isRecording,
     isPaused,
     audioLevel,
+    mimeType,
     startRecording,
     stopRecording,
     pauseRecording,
     resumeRecording,
-  } = useVoiceRecording({ onAutoStop: handleAutoStop });
+  } = useVoiceRecording({
+    onAutoStop: useCallback(async (audioBlob: Blob) => {
+      addNotification('Recording stopped due to silence', 'info');
+      setRecording(false);
+      if (audioBlob.size > 0) {
+        await sendVoiceMessage(audioBlob, mimeTypeRef.current || undefined);
+      }
+    }, [addNotification, setRecording, sendVoiceMessage]),
+  });
+
+  // Keep the ref in sync so handleAutoStop always has the latest mimeType
+  mimeTypeRef.current = mimeType;
 
   const handleStart = async () => {
     // Barge-in: stop AI audio if playing
     if (isAudioPlaying) {
       stopAudioPlayback();
     }
+    setShowReadyHint(false);
     setRecording(true);
-    await startRecording();
+    try {
+      await startRecording();
+    } catch {
+      setRecording(false);
+      addNotification('Microphone not available. Please check permissions.', 'error');
+    }
   };
 
   const handleStop = async () => {
     setRecording(false);
-    const audioBlob = await stopRecording();
-    if (audioBlob.size > 0) {
-      await sendVoiceMessage(audioBlob);
+    try {
+      const audioBlob = await stopRecording();
+      if (audioBlob.size > 0) {
+        await sendVoiceMessage(audioBlob, mimeType);
+      }
+    } catch {
+      addNotification('Failed to process recording. Please try again.', 'error');
     }
   };
 
@@ -73,12 +102,15 @@ export function VoiceRecorder() {
     <div className="flex items-center gap-2">
       {/* Main mic button — start or stop recording */}
       <button
+        type="button"
         onClick={handleToggleRecording}
         disabled={isDisabled}
         className={`rounded-full p-2 transition-colors disabled:opacity-50 ${
           isRecording
             ? 'bg-red-500 hover:bg-red-600 text-white'
-            : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+            : showReadyHint
+              ? 'bg-blue-100 hover:bg-blue-200 text-blue-700 ring-2 ring-blue-400 animate-pulse'
+              : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
         }`}
         title={isRecording ? 'Stop recording' : 'Start voice input'}
       >
@@ -115,6 +147,7 @@ export function VoiceRecorder() {
       {/* Pause/Resume button — only shown while recording */}
       {isRecording && (
         <button
+          type="button"
           onClick={handleTogglePause}
           className={`rounded-full p-2 transition-colors ${
             isPaused
@@ -155,6 +188,18 @@ export function VoiceRecorder() {
       )}
 
       <AudioVisualizer isActive={isRecording && !isPaused} audioLevel={audioLevel} />
+
+      {voiceStatus && !isRecording && (
+        <span className="text-xs text-blue-600 font-medium animate-pulse">
+          {voiceStatus.message}
+        </span>
+      )}
+
+      {showReadyHint && !isRecording && !voiceStatus && (
+        <span className="text-xs text-blue-600 font-medium">
+          Tap to respond
+        </span>
+      )}
     </div>
   );
 }

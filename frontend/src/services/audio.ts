@@ -19,10 +19,19 @@ export function createAudioAnalyser(stream: MediaStream): AnalyserNode {
 }
 
 export function getAudioLevel(analyser: AnalyserNode): number {
-  const data = new Uint8Array(analyser.frequencyBinCount);
-  analyser.getByteFrequencyData(data);
-  const sum = data.reduce((acc, val) => acc + val, 0);
-  return sum / data.length / 255; // Normalized 0-1
+  // Use time-domain data (waveform) instead of frequency data because
+  // Safari returns all zeros from getByteFrequencyData for MediaStreamSource nodes
+  const data = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(data);
+  // RMS of deviation from 128 (silence center point)
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    const normalized = (data[i] - 128) / 128;
+    sum += normalized * normalized;
+  }
+  // Amplify by 8× — raw RMS for speech is ~0.03-0.15, but the UI
+  // (bar height multiplier of 32) expects values in the 0.2-0.8 range
+  return Math.min(1, Math.sqrt(sum / data.length) * 8);
 }
 
 // ---- Audio Playback ----
