@@ -24,7 +24,7 @@ Globals:
         EXPORTS_BUCKET: !Ref ExportsBucket
         BEDROCK_MODEL_PRO: amazon.nova-pro-v1:0
         BEDROCK_MODEL_LITE: amazon.nova-lite-v1:0
-        BEDROCK_MODEL_SONIC: amazon.nova-sonic-v1:0
+        BEDROCK_MODEL_SONIC: amazon.nova-2-sonic-v1:0
         LOG_LEVEL: INFO
 
 Resources:
@@ -63,7 +63,15 @@ Resources:
     Properties:
       ApiId: !Ref WebSocketApi
       RouteKey: $default
+      RouteResponseSelectionExpression: "$default"
       Target: !Sub integrations/${WebSocketIntegration}
+
+  DefaultRouteResponse:
+    Type: AWS::ApiGatewayV2::RouteResponse
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteId: !Ref DefaultRoute
+      RouteResponseKey: $default
 
   WebSocketIntegration:
     Type: AWS::ApiGatewayV2::Integration
@@ -109,10 +117,14 @@ Resources:
       Environment:
         Variables:
           WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+          AUDIO_BUFFER_TABLE: !Ref AudioBufferTable
+          VOICE_STREAM_FUNCTION_NAME: !Ref VoiceStreamFunction
       Policies:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AudioBufferTable
         - S3CrudPolicy:
             BucketName: !Ref UploadsBucket
         - Statement:
@@ -126,6 +138,10 @@ Resources:
                 - textract:StartDocumentTextDetection
                 - textract:GetDocumentTextDetection
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt VoiceStreamFunction.Arn
 
   WebSocketFunctionPermission:
     Type: AWS::Lambda::Permission
@@ -143,10 +159,21 @@ Resources:
       CodeUri: .
       MemorySize: 2048
       Timeout: 300
+      Environment:
+        Variables:
+          AUDIO_BUFFER_TABLE: !Ref AudioBufferTable
+          WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
       Policies:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AudioBufferTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
 
   FileUploadFunction:
     Type: AWS::Serverless::Function
@@ -204,6 +231,25 @@ Resources:
             Method: POST
 
   # ─── DynamoDB ───
+  AudioBufferTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub archflow-audio-buffer-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+        - AttributeName: seq
+          AttributeType: N
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+        - AttributeName: seq
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   ConversationsTable:
     Type: AWS::DynamoDB::Table
     Properties:

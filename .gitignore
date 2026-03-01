@@ -59,3 +59,4 @@ docs/
 testing.sh
 sync_refs.sh
 backend/package/
+novasonic2example/
