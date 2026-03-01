@@ -95,9 +95,25 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
                     retried = retried[3:].strip()
                 if retried.endswith("```"):
                     retried = retried[:-3].strip()
-                cleaned = retried
+
+                retry_state = validate_mermaid_syntax(retried)
+                if retry_state.is_valid:
+                    cleaned = retried
+                else:
+                    logger.warning(
+                        "Diagram retry also invalid, returning text-only response",
+                        extra={"error": retry_state.error_message},
+                    )
+                    return AgentResponse(
+                        text="I understood your requirements but had trouble generating a valid diagram. Could you try rephrasing your request?",
+                        agent_used="diagram_generator",
+                    )
             except Exception:
-                logger.warning("Diagram retry failed, using original output", exc_info=True)
+                logger.warning("Diagram retry failed, returning text-only response", exc_info=True)
+                return AgentResponse(
+                    text="I understood your requirements but encountered an issue generating the diagram. Please try again.",
+                    agent_used="diagram_generator",
+                )
 
         return AgentResponse(
             text="I've updated the diagram based on your requirements.",

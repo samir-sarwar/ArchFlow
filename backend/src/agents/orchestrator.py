@@ -69,15 +69,26 @@ class OrchestratorAgent:
             extra={"session_id": context.session_id, "message_length": len(message)},
         )
 
-        intent = await self.analyze_intent(message, context)
+        try:
+            intent = await self.analyze_intent(message, context)
+        except Exception:
+            logger.error("Intent classification failed, defaulting to advisor", exc_info=True)
+            intent = IntentType.ARCHITECTURE_ADVICE
 
-        if intent == IntentType.CLARIFICATION_NEEDED:
-            return await self.agents["requirements"].process(context)
-        elif intent == IntentType.ARCHITECTURE_ADVICE:
-            return await self.agents["advisor"].process(context)
-        elif intent == IntentType.MODIFY_DIAGRAM:
-            return await self.agents["generator"].process(context)
-        elif intent == IntentType.ANALYZE_CONTEXT:
-            return await self.agents["context"].process(context)
-        else:
-            return await self.agents["advisor"].process(context)
+        try:
+            if intent == IntentType.CLARIFICATION_NEEDED:
+                return await self.agents["requirements"].process(context)
+            elif intent == IntentType.ARCHITECTURE_ADVICE:
+                return await self.agents["advisor"].process(context)
+            elif intent == IntentType.MODIFY_DIAGRAM:
+                return await self.agents["generator"].process(context)
+            elif intent == IntentType.ANALYZE_CONTEXT:
+                return await self.agents["context"].process(context)
+            else:
+                return await self.agents["advisor"].process(context)
+        except Exception:
+            logger.error("Agent processing failed", exc_info=True)
+            return AgentResponse(
+                text="I'm sorry, I encountered an error processing your request. Please try again.",
+                agent_used="orchestrator",
+            )

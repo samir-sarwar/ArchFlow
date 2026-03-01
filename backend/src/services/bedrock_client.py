@@ -15,9 +15,9 @@ class BedrockClient:
     def __init__(self):
         self.client = boto3.client("bedrock-runtime", region_name="us-east-1")
         self.region = os.environ.get("AWS_REGION", "us-east-1")
-        self.model_pro = os.environ.get("BEDROCK_MODEL_PRO", "us.amazon.nova-pro-v1:0")
+        self.model_pro = os.environ.get("BEDROCK_MODEL_PRO", "amazon.nova-pro-v1:0")
         self.model_lite = os.environ.get(
-            "BEDROCK_MODEL_LITE", "us.amazon.nova-lite-v1:0"
+            "BEDROCK_MODEL_LITE", "amazon.nova-lite-v1:0"
         )
         self.model_sonic = os.environ.get(
             "BEDROCK_MODEL_SONIC", "amazon.nova-sonic-v1:0"
@@ -110,7 +110,10 @@ class BedrockClient:
         return response_body["output"]["message"]["content"][0]["text"]
 
     async def invoke_sonic(
-        self, audio_pcm: bytes, system_prompt: str = ""
+        self,
+        audio_pcm: bytes,
+        system_prompt: str = "",
+        on_transcription: "Callable[[str], None] | None" = None,
     ) -> dict:
         """Invoke Nova Sonic for speech-to-text transcription.
 
@@ -165,9 +168,10 @@ class BedrockClient:
         assistant_texts = []
         audio_chunks = []
         current_role = None
+        collection_error = None
 
         async def _collect_responses():
-            nonlocal current_role
+            nonlocal current_role, collection_error
             try:
                 while True:
                     output = await stream.await_output()
@@ -188,6 +192,8 @@ class BedrockClient:
                             text = evt["textOutput"]["content"]
                             if current_role == "USER":
                                 user_texts.append(text)
+                                if on_transcription:
+                                    on_transcription(" ".join(user_texts))
                             elif current_role == "ASSISTANT":
                                 assistant_texts.append(text)
 
@@ -202,6 +208,7 @@ class BedrockClient:
             except StopAsyncIteration:
                 pass
             except Exception as e:
+                collection_error = e
                 logger.error("Error collecting Sonic responses", exc_info=True)
 
         # Start collecting responses in background
@@ -332,8 +339,20 @@ class BedrockClient:
         }))
         await stream.input_stream.close()
 
-        # Wait for all responses to be collected
-        await response_task
+        # Wait for all responses with a timeout to avoid hanging the Lambda
+        try:
+            await asyncio.wait_for(response_task, timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.error("Nova Sonic response collection timed out after 60s")
+            response_task.cancel()
+            raise RuntimeError("Nova Sonic response collection timed out")
+
+        if collection_error:
+            logger.error(
+                "Nova Sonic collection ended with error",
+                extra={"error": str(collection_error)},
+            )
+            raise collection_error
 
         transcription = " ".join(user_texts).strip()
         response_text = " ".join(assistant_texts).strip()
@@ -343,6 +362,7 @@ class BedrockClient:
             extra={
                 "transcription_length": len(transcription),
                 "response_length": len(response_text),
+                "audio_chunk_count": len(audio_chunks),
             },
         )
 
