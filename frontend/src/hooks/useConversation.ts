@@ -4,6 +4,7 @@ import { useConversationStore } from '@/stores/conversationStore';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
 import { createChunkPlayer, type AudioChunkPlayer } from '@/services/audio';
+import { api } from '@/services/api';
 import type { Message } from '@/types/conversation';
 
 const WS_URL = import.meta.env.VITE_WEBSOCKET_URL || '';
@@ -15,11 +16,13 @@ export function useConversation() {
   const restoreDiagram = useDiagramStore((s) => s.restoreDiagram);
   const { setLoading, setError } = useUIStore();
   const chunkPlayerRef = useRef<AudioChunkPlayer | null>(null);
+  const responseTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Cleanup audio player on unmount
   useEffect(() => {
     return () => {
       chunkPlayerRef.current?.stop();
+      clearTimeout(responseTimeoutRef.current);
     };
   }, []);
 
@@ -49,8 +52,22 @@ export function useConversation() {
   useEffect(() => {
     if (!lastMessage) return;
 
+    // Skip empty frames (e.g. from Lambda returning no body)
+    if (!lastMessage.data) return;
+
     try {
       const data = JSON.parse(lastMessage.data);
+
+      if (data.type === 'voice_transcription') {
+        conversationStore.updateLastUserMessage(data.payload.text);
+      }
+
+      if (data.type === 'voice_status') {
+        conversationStore.setVoiceStatus({
+          stage: data.payload.stage,
+          message: data.payload.message,
+        });
+      }
 
       if (data.type === 'ai_response') {
         // Capture sessionId from first backend response
@@ -85,6 +102,8 @@ export function useConversation() {
           });
         }
 
+        clearTimeout(responseTimeoutRef.current);
+        conversationStore.setVoiceStatus(null);
         setLoading(false);
         setError(null);
       }
@@ -152,11 +171,16 @@ export function useConversation() {
 
       if (data.type === 'error') {
         console.error('[ArchFlow] Backend error:', data.payload);
+        clearTimeout(responseTimeoutRef.current);
+        conversationStore.setVoiceStatus(null);
+        // Update any placeholder voice message to show it failed
+        conversationStore.updateLastUserMessage('[Voice message failed]');
         setError(data.payload.message);
         setLoading(false);
       }
     } catch (err) {
       console.error('[ArchFlow] Failed to handle WebSocket message:', err, lastMessage?.data);
+      clearTimeout(responseTimeoutRef.current);
       setError('Failed to parse server response');
       setLoading(false);
     }
@@ -189,37 +213,68 @@ export function useConversation() {
     setError(null);
   };
 
-  // Send a voice recording to the backend
-  const sendVoiceMessage = async (audioBlob: Blob) => {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    const base64 = btoa(binary);
+  // Send a voice recording to the backend via S3 upload
+  const sendVoiceMessage = async (audioBlob: Blob, mimeType?: string) => {
+    const effectiveMime = mimeType || 'audio/webm;codecs=opus';
+    console.log('[ArchFlow] Voice blob size:', audioBlob.size, 'mimeType:', effectiveMime);
 
-    // Add placeholder user message
+    // Add placeholder user message immediately
     const userMsg: Message = {
       role: 'user',
       content: '[Voice message — transcribing...]',
       timestamp: new Date().toISOString(),
     };
     conversationStore.addMessage(userMsg);
-
-    // Include current diagram so AI always has latest state
-    const currentDiagram = useDiagramStore.getState().currentSyntax;
-
-    // Send voice action via WebSocket
-    wsSend({
-      action: 'voice',
-      sessionId: conversationStore.sessionId,
-      audio: base64,
-      currentDiagram: currentDiagram || undefined,
-    });
-
     setLoading(true);
     setError(null);
+
+    try {
+      // 1. Get presigned URL from existing /upload endpoint
+      const sessionId = conversationStore.sessionId || 'anonymous';
+      const ext = effectiveMime.includes('mp4') ? 'mp4' : effectiveMime.includes('ogg') ? 'ogg' : 'webm';
+      const fileName = `voice-${Date.now()}.${ext}`;
+      const { uploadUrl, fileKey } = await api.uploadFile(
+        sessionId,
+        fileName,
+        effectiveMime.split(';')[0], // strip codec info for MIME validation
+        audioBlob.size,
+      );
+      console.log('[ArchFlow] Got presigned URL, uploading to S3:', fileKey);
+
+      // 2. Upload raw audio blob directly to S3
+      // Use the same stripped MIME type that was used to generate the presigned URL
+      const strippedMime = effectiveMime.split(';')[0];
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'PUT',
+        body: audioBlob,
+        headers: { 'Content-Type': strippedMime },
+      });
+      if (!uploadResponse.ok) {
+        throw new Error(`S3 upload failed: ${uploadResponse.status}`);
+      }
+      console.log('[ArchFlow] Audio uploaded to S3 successfully');
+
+      // 3. Send lightweight WebSocket message with S3 key
+      const currentDiagram = useDiagramStore.getState().currentSyntax;
+      wsSend({
+        action: 'voice',
+        sessionId,
+        audioKey: fileKey,
+        mimeType: effectiveMime,
+        currentDiagram: currentDiagram || undefined,
+      });
+
+      // 4. Timeout safety (90s for S3 download + Nova Sonic processing)
+      clearTimeout(responseTimeoutRef.current);
+      responseTimeoutRef.current = setTimeout(() => {
+        setLoading(false);
+        setError('Voice processing timed out. Please try again.');
+      }, 90_000);
+    } catch (err) {
+      console.error('[ArchFlow] Voice upload failed:', err);
+      setLoading(false);
+      setError((err as Error).message || 'Voice upload failed. Please try again.');
+    }
   };
 
   const stopAudioPlayback = () => {

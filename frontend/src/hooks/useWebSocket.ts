@@ -80,8 +80,16 @@ export function useWebSocket(url: string) {
   }, [connect]);
 
   const sendMessage = useCallback((message: unknown) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(message));
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.warn('[ArchFlow] WebSocket not open, dropping message');
+      return;
+    }
+    try {
+      const payload = JSON.stringify(message);
+      console.debug('[ArchFlow] WS send', payload.length, 'bytes');
+      wsRef.current.send(payload);
+    } catch (err) {
+      console.error('[ArchFlow] WebSocket send failed:', err);
     }
   }, []);
 

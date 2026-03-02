@@ -1,12 +1,18 @@
 import { create } from 'zustand';
 import type { Message } from '@/types/conversation';
 
+interface VoiceStatus {
+  stage: string;
+  message: string;
+}
+
 interface ConversationStore {
   sessionId: string | null;
   messages: Message[];
   isRecording: boolean;
   isAudioPlaying: boolean;
   currentTranscript: string;
+  voiceStatus: VoiceStatus | null;
   _wsSend: ((msg: unknown) => void) | null;
   _isConnected: boolean;
 
@@ -16,6 +22,7 @@ interface ConversationStore {
   setRecording: (isRecording: boolean) => void;
   setAudioPlaying: (playing: boolean) => void;
   setTranscript: (transcript: string) => void;
+  setVoiceStatus: (status: VoiceStatus | null) => void;
   clearMessages: () => void;
   setWsSend: (fn: (msg: unknown) => void) => void;
   setIsConnected: (connected: boolean) => void;
@@ -28,6 +35,7 @@ export const useConversationStore = create<ConversationStore>((set) => ({
   isRecording: false,
   isAudioPlaying: false,
   currentTranscript: '',
+  voiceStatus: null,
   _wsSend: null,
   _isConnected: false,
 
@@ -57,7 +65,9 @@ export const useConversationStore = create<ConversationStore>((set) => ({
 
   setTranscript: (transcript) => set({ currentTranscript: transcript }),
 
-  clearMessages: () => set({ messages: [], currentTranscript: '' }),
+  setVoiceStatus: (status) => set({ voiceStatus: status }),
+
+  clearMessages: () => set({ messages: [], currentTranscript: '', voiceStatus: null }),
 
   setWsSend: (fn) => set({ _wsSend: fn }),
 
