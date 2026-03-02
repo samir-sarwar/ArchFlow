@@ -22,13 +22,13 @@ Globals:
         CONVERSATION_TABLE_NAME: !Ref ConversationsTable
         UPLOADS_BUCKET: !Ref UploadsBucket
         EXPORTS_BUCKET: !Ref ExportsBucket
-        BEDROCK_MODEL_PRO: amazon.nova-pro-v1:0
-        BEDROCK_MODEL_LITE: amazon.nova-lite-v1:0
-        BEDROCK_MODEL_SONIC: amazon.nova-2-sonic-v1:0
+        BEDROCK_MODEL_PRO: us.amazon.nova-2-pro-v1:0
+        BEDROCK_MODEL_LITE: us.amazon.nova-2-lite-v1:0
+        BEDROCK_MODEL_SONIC: us.amazon.nova-2-sonic-v1:0
         LOG_LEVEL: INFO
 
 Resources:
-  # ─── WebSocket API ───
+  # ─── WebSocket API (text chat + file upload) ───
   WebSocketApi:
     Type: AWS::ApiGatewayV2::Api
     Properties:
@@ -91,18 +91,6 @@ Resources:
         AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization'"
 
-  # ─── Lambda Layers ───
-  FfmpegLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      LayerName: !Sub archflow-ffmpeg-${Environment}
-      Description: Static ffmpeg binary for audio format conversion
-      ContentUri: layers/ffmpeg/
-      CompatibleRuntimes:
-        - python3.12
-      CompatibleArchitectures:
-        - arm64
-
   # ─── Lambda Functions ───
   WebSocketFunction:
     Type: AWS::Serverless::Function
@@ -112,19 +100,13 @@ Resources:
       CodeUri: .
       MemorySize: 2048
       Timeout: 300
-      Layers:
-        - !Ref FfmpegLayer
       Environment:
         Variables:
           WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
-          AUDIO_BUFFER_TABLE: !Ref AudioBufferTable
-          VOICE_STREAM_FUNCTION_NAME: !Ref VoiceStreamFunction
       Policies:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AudioBufferTable
         - S3CrudPolicy:
             BucketName: !Ref UploadsBucket
         - Statement:
@@ -137,11 +119,8 @@ Resources:
                 - textract:DetectDocumentText
                 - textract:StartDocumentTextDetection
                 - textract:GetDocumentTextDetection
+                - textract:AnalyzeDocument
               Resource: "*"
-            - Effect: Allow
-              Action:
-                - lambda:InvokeFunction
-              Resource: !GetAtt VoiceStreamFunction.Arn
 
   WebSocketFunctionPermission:
     Type: AWS::Lambda::Permission
@@ -150,30 +129,6 @@ Resources:
       FunctionName: !Ref WebSocketFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
-
-  VoiceStreamFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub archflow-voice-stream-${Environment}
-      Handler: src.handlers.voice_stream.lambda_handler
-      CodeUri: .
-      MemorySize: 2048
-      Timeout: 300
-      Environment:
-        Variables:
-          AUDIO_BUFFER_TABLE: !Ref AudioBufferTable
-          WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
-      Policies:
-        - AmazonBedrockFullAccess
-        - DynamoDBCrudPolicy:
-            TableName: !Ref ConversationsTable
-        - DynamoDBCrudPolicy:
-            TableName: !Ref AudioBufferTable
-        - Statement:
-            - Effect: Allow
-              Action:
-                - execute-api:ManageConnections
-              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
 
   FileUploadFunction:
     Type: AWS::Serverless::Function
@@ -231,25 +186,6 @@ Resources:
             Method: POST
 
   # ─── DynamoDB ───
-  AudioBufferTable:
-    Type: AWS::DynamoDB::Table
-    Properties:
-      TableName: !Sub archflow-audio-buffer-${Environment}
-      BillingMode: PAY_PER_REQUEST
-      AttributeDefinitions:
-        - AttributeName: session_id
-          AttributeType: S
-        - AttributeName: seq
-          AttributeType: N
-      KeySchema:
-        - AttributeName: session_id
-          KeyType: HASH
-        - AttributeName: seq
-          KeyType: RANGE
-      TimeToLiveSpecification:
-        AttributeName: ttl
-        Enabled: true
-
   ConversationsTable:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -293,7 +229,7 @@ Resources:
 
 Outputs:
   WebSocketUrl:
-    Description: WebSocket API URL
+    Description: WebSocket API URL (text chat)
     Value: !Sub wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
 
   RestApiUrl:

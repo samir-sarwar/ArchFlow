@@ -12,6 +12,7 @@ build/
 env/
 venv/
 .venv/
+voice_venv/
 
 # Node
 node_modules/
@@ -60,3 +61,7 @@ testing.sh
 sync_refs.sh
 backend/package/
 novasonic2example/
+amazon-nova-2-sonic/
+multimodal-embeddings/
+multimodal-generation/
+multimodal-understanding/
