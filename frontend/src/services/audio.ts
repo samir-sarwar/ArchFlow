@@ -1,23 +1,3 @@
-export async function requestMicrophoneAccess(): Promise<MediaStream> {
-  return navigator.mediaDevices.getUserMedia({
-    audio: {
-      sampleRate: 16000,
-      channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
-    },
-  });
-}
-
-export function createAudioAnalyser(stream: MediaStream): AnalyserNode {
-  const audioContext = new AudioContext();
-  const source = audioContext.createMediaStreamSource(stream);
-  const analyser = audioContext.createAnalyser();
-  analyser.fftSize = 256;
-  source.connect(analyser);
-  return analyser;
-}
-
 export function getAudioLevel(analyser: AnalyserNode): number {
   // Use time-domain data (waveform) instead of frequency data because
   // Safari returns all zeros from getByteFrequencyData for MediaStreamSource nodes
@@ -155,4 +135,47 @@ export function createChunkPlayer(
   const isPlaying = () => playing;
 
   return { addChunk, finish, stop, isPlaying };
+}
+
+/**
+ * Fetch raw LPCM PCM audio from a URL (e.g. an S3 presigned URL) and play it.
+ * The audio must be 16-bit signed little-endian PCM at the given sample rate.
+ * Returns a Promise that resolves when playback finishes.
+ */
+export async function playLPCMAudio(
+  url: string,
+  sampleRate: number = 24000,
+  onStateChange?: (playing: boolean) => void,
+): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch audio: ${response.status}`);
+  }
+  const rawBuffer = await response.arrayBuffer();
+
+  const ctx = getPlaybackContext(sampleRate);
+  const dataView = new DataView(rawBuffer);
+  const sampleCount = rawBuffer.byteLength / 2; // 16-bit = 2 bytes per sample
+  const float32 = new Float32Array(sampleCount);
+
+  for (let i = 0; i < sampleCount; i++) {
+    float32[i] = dataView.getInt16(i * 2, true) / 32768; // little-endian, normalize
+  }
+
+  const buffer = ctx.createBuffer(1, sampleCount, sampleRate);
+  buffer.getChannelData(0).set(float32);
+
+  const source = ctx.createBufferSource();
+  source.buffer = buffer;
+  source.connect(ctx.destination);
+
+  onStateChange?.(true);
+  source.start();
+
+  return new Promise((resolve) => {
+    source.onended = () => {
+      onStateChange?.(false);
+      resolve();
+    };
+  });
 }
