@@ -1,0 +1,22 @@
+FROM public.ecr.aws/docker/library/python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY voice_server/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY voice_server/ ./voice_server/
+
+# Environment defaults (override at runtime)
+ENV HOST=0.0.0.0
+ENV WS_PORT=8081
+ENV AWS_DEFAULT_REGION=us-east-1
+ENV BEDROCK_MODEL_SONIC=amazon.nova-2-sonic-v1:0
+ENV LOGLEVEL=INFO
+
+EXPOSE 8081
+
+# Run the server module
+CMD ["python", "-m", "voice_server.server"]
