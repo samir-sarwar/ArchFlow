@@ -7,7 +7,9 @@ import { AudioVisualizer } from './AudioVisualizer';
 
 export function VoiceRecorder() {
   const {
-    sendVoiceMessage,
+    startVoiceSession,
+    sendAudioChunk,
+    stopVoiceSession,
     stopAudioPlayback,
     isConnected,
   } = useConversation();
@@ -15,8 +17,6 @@ export function VoiceRecorder() {
   const isAudioPlaying = useConversationStore((s) => s.isAudioPlaying);
   const voiceStatus = useConversationStore((s) => s.voiceStatus);
   const addNotification = useUIStore((s) => s.addNotification);
-  // Ref keeps mimeType current for the handleAutoStop callback closure
-  const mimeTypeRef = useRef('');
 
   // "Ready to listen" hint after AI finishes speaking
   const [showReadyHint, setShowReadyHint] = useState(false);
@@ -32,25 +32,19 @@ export function VoiceRecorder() {
 
   const {
     isRecording,
-    isPaused,
     audioLevel,
-    mimeType,
     startRecording,
     stopRecording,
-    pauseRecording,
-    resumeRecording,
   } = useVoiceRecording({
-    onAutoStop: useCallback(async (audioBlob: Blob) => {
+    onAudioChunk: useCallback((pcmBase64: string) => {
+      sendAudioChunk(pcmBase64);
+    }, [sendAudioChunk]),
+    onAutoStop: useCallback(() => {
       addNotification('Recording stopped due to silence', 'info');
       setRecording(false);
-      if (audioBlob.size > 0) {
-        await sendVoiceMessage(audioBlob, mimeTypeRef.current || undefined);
-      }
-    }, [addNotification, setRecording, sendVoiceMessage]),
+      stopVoiceSession();
+    }, [addNotification, setRecording, stopVoiceSession]),
   });
-
-  // Keep the ref in sync so handleAutoStop always has the latest mimeType
-  mimeTypeRef.current = mimeType;
 
   const handleStart = async () => {
     // Barge-in: stop AI audio if playing
@@ -60,6 +54,7 @@ export function VoiceRecorder() {
     setShowReadyHint(false);
     setRecording(true);
     try {
+      startVoiceSession();
       await startRecording();
     } catch {
       setRecording(false);
@@ -67,29 +62,15 @@ export function VoiceRecorder() {
     }
   };
 
-  const handleStop = async () => {
+  const handleStop = () => {
     setRecording(false);
-    try {
-      const audioBlob = await stopRecording();
-      if (audioBlob.size > 0) {
-        await sendVoiceMessage(audioBlob, mimeType);
-      }
-    } catch {
-      addNotification('Failed to process recording. Please try again.', 'error');
-    }
-  };
-
-  const handleTogglePause = () => {
-    if (isPaused) {
-      resumeRecording();
-    } else {
-      pauseRecording();
-    }
+    stopRecording();
+    stopVoiceSession();
   };
 
   const handleToggleRecording = async () => {
     if (isRecording) {
-      await handleStop();
+      handleStop();
     } else {
       await handleStart();
     }
@@ -144,50 +125,7 @@ export function VoiceRecorder() {
         )}
       </button>
 
-      {/* Pause/Resume button — only shown while recording */}
-      {isRecording && (
-        <button
-          type="button"
-          onClick={handleTogglePause}
-          className={`rounded-full p-2 transition-colors ${
-            isPaused
-              ? 'bg-yellow-100 hover:bg-yellow-200 text-yellow-700 ring-2 ring-yellow-300'
-              : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-          }`}
-          title={isPaused ? 'Resume recording' : 'Pause recording'}
-        >
-          {isPaused ? (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="none"
-            >
-              <polygon points="6,4 20,12 6,20" />
-            </svg>
-          ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              stroke="none"
-            >
-              <rect x="6" y="4" width="4" height="16" rx="1" />
-              <rect x="14" y="4" width="4" height="16" rx="1" />
-            </svg>
-          )}
-        </button>
-      )}
-
-      {isPaused && (
-        <span className="text-xs text-yellow-600 font-medium">Paused</span>
-      )}
-
-      <AudioVisualizer isActive={isRecording && !isPaused} audioLevel={audioLevel} />
+      <AudioVisualizer isActive={isRecording} audioLevel={audioLevel} />
 
       {voiceStatus && !isRecording && (
         <span className="text-xs text-blue-600 font-medium animate-pulse">
