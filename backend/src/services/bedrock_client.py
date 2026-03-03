@@ -10,18 +10,16 @@ from src.utils import logger
 
 
 class BedrockClient:
-    """Wrapper for Amazon Bedrock API calls."""
+    """Wrapper for Amazon Bedrock API calls using the Converse API."""
 
     def __init__(self):
-        self.client = boto3.client("bedrock-runtime", region_name="us-east-1")
         self.region = os.environ.get("AWS_REGION", "us-east-1")
-        self.model_pro = os.environ.get("BEDROCK_MODEL_PRO", "amazon.nova-pro-v1:0")
-        self.model_lite = os.environ.get(
-            "BEDROCK_MODEL_LITE", "amazon.nova-lite-v1:0"
-        )
-        self.model_sonic = os.environ.get(
-            "BEDROCK_MODEL_SONIC", "amazon.nova-sonic-v1:0"
-        )
+        self.client = boto3.client("bedrock-runtime", region_name=self.region)
+
+        # Nova 2 model IDs with the us. inference profile prefix (required for cross-region inference)
+        self.model_pro = os.environ.get("BEDROCK_MODEL_PRO", "us.amazon.nova-2-pro-v1:0")
+        self.model_lite = os.environ.get("BEDROCK_MODEL_LITE", "us.amazon.nova-2-lite-v1:0")
+        self.model_sonic = os.environ.get("BEDROCK_MODEL_SONIC", "us.amazon.nova-2-sonic-v1:0")
 
     async def invoke_model(
         self,
@@ -30,37 +28,31 @@ class BedrockClient:
         model_id: str | None = None,
         max_tokens: int = 4096,
     ) -> str:
-        """Invoke a Bedrock model and return the response text."""
+        """Invoke a Bedrock model via the Converse API and return the response text."""
         model = model_id or self.model_pro
 
         logger.info("Invoking Bedrock model", extra={"model_id": model})
 
-        body = {
+        kwargs = {
+            "modelId": model,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": max_tokens, "temperature": 0.7},
+            "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
         }
 
         if system_prompt:
-            body["system"] = [{"text": system_prompt}]
+            kwargs["system"] = [{"text": system_prompt}]
 
-        response = self.client.invoke_model(
-            modelId=model,
-            body=json.dumps(body),
-            contentType="application/json",
-            accept="application/json",
-        )
-
-        response_body = json.loads(response["body"].read())
-        return response_body["output"]["message"]["content"][0]["text"]
+        response = self.client.converse(**kwargs)
+        return response["output"]["message"]["content"][0]["text"]
 
     async def invoke_lite(self, prompt: str, system_prompt: str = "") -> str:
-        """Invoke Nova Lite for quick tasks."""
+        """Invoke Nova Lite 2 for quick tasks."""
         return await self.invoke_model(
             prompt, system_prompt, model_id=self.model_lite, max_tokens=2048
         )
 
     async def invoke_pro(self, prompt: str, system_prompt: str = "") -> str:
-        """Invoke Nova Pro for complex reasoning."""
+        """Invoke Nova Pro 2 for complex reasoning."""
         return await self.invoke_model(
             prompt, system_prompt, model_id=self.model_pro, max_tokens=4096
         )
@@ -73,41 +65,59 @@ class BedrockClient:
         system_prompt: str = "",
         max_tokens: int = 4096,
     ) -> str:
-        """Invoke Nova Pro with an image for vision analysis."""
+        """Invoke Nova Pro 2 with an image for vision analysis."""
         logger.info("Invoking Bedrock with image", extra={"model_id": self.model_pro})
 
         fmt = media_type.split("/")[-1]
         if fmt == "jpg":
             fmt = "jpeg"
 
-        body = {
+        # The Converse API accepts image bytes directly (no base64 wrapping needed)
+        image_bytes = base64.b64decode(image_b64) if isinstance(image_b64, str) else image_b64
+
+        kwargs = {
+            "modelId": self.model_pro,
             "messages": [
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "image": {
-                                "format": fmt,
-                                "source": {"bytes": image_b64},
-                            }
-                        },
+                        {"image": {"format": fmt, "source": {"bytes": image_bytes}}},
                         {"text": prompt},
                     ],
                 }
             ],
-            "inferenceConfig": {"maxTokens": max_tokens, "temperature": 0.7},
+            "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
+        }
+
+        if system_prompt:
+            kwargs["system"] = [{"text": system_prompt}]
+
+        response = self.client.converse(**kwargs)
+        return response["output"]["message"]["content"][0]["text"]
+
+    async def invoke_pro_streaming(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        max_tokens: int = 4096,
+    ):
+        """Invoke Nova Pro 2 with streaming — yields text chunks as they arrive."""
+        kwargs = {
+            "modelId": self.model_pro,
+            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
         }
         if system_prompt:
-            body["system"] = [{"text": system_prompt}]
+            kwargs["system"] = [{"text": system_prompt}]
 
-        response = self.client.invoke_model(
-            modelId=self.model_pro,
-            body=json.dumps(body),
-            contentType="application/json",
-            accept="application/json",
-        )
-        response_body = json.loads(response["body"].read())
-        return response_body["output"]["message"]["content"][0]["text"]
+        response = self.client.converse_stream(**kwargs)
+        stream = response.get("stream")
+        if stream:
+            for event in stream:
+                if "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if "text" in delta:
+                        yield delta["text"]
 
     async def invoke_sonic(
         self,
@@ -115,14 +125,12 @@ class BedrockClient:
         system_prompt: str = "",
         on_transcription: "Callable[[str], None] | None" = None,
     ) -> dict:
-        """Invoke Nova Sonic for speech-to-text transcription.
+        """
+        Invoke Nova Sonic 2 for speech-to-text and audio response.
+        Returns dict with 'transcription', 'response_text', 'audio_chunks'.
 
-        Args:
-            audio_pcm: Raw PCM audio bytes (16kHz, mono, 16-bit)
-            system_prompt: System prompt for the conversation
-
-        Returns:
-            Dict with 'transcription' (user speech) and 'response_text' (assistant reply)
+        NOTE: This is the single-shot version (whole audio at once).
+        For real-time streaming, the voice_server/ module is used instead.
         """
         from aws_sdk_bedrock_runtime.client import (
             BedrockRuntimeClient as SonicClient,
@@ -135,13 +143,12 @@ class BedrockClient:
         from aws_sdk_bedrock_runtime.config import Config as SonicConfig
         from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
 
-        logger.info("Invoking Nova Sonic", extra={"audio_size": len(audio_pcm)})
+        logger.info("Invoking Nova Sonic (single-shot)", extra={"audio_size": len(audio_pcm)})
 
         prompt_name = str(uuid.uuid4())
         content_name = str(uuid.uuid4())
         audio_content_name = str(uuid.uuid4())
 
-        # Initialize the experimental Bedrock client for bidirectional streaming
         config = SonicConfig(
             endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
             region=self.region,
@@ -149,19 +156,16 @@ class BedrockClient:
         )
         sonic_client = SonicClient(config=config)
 
-        async def _send_event(stream, event_json: str):
-            event = InvokeModelWithBidirectionalStreamInputChunk(
+        async def _send_event(stream, event_dict: dict):
+            chunk = InvokeModelWithBidirectionalStreamInputChunk(
                 value=BidirectionalInputPayloadPart(
-                    bytes_=event_json.encode("utf-8")
+                    bytes_=json.dumps(event_dict).encode("utf-8")
                 )
             )
-            await stream.input_stream.send(event)
+            await stream.input_stream.send(chunk)
 
-        # Open the bidirectional stream
         stream = await sonic_client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(
-                model_id=self.model_sonic
-            )
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_sonic)
         )
 
         user_texts = []
@@ -176,18 +180,13 @@ class BedrockClient:
                 while True:
                     output = await stream.await_output()
                     result = await output[1].receive()
-
                     if result.value and result.value.bytes_:
                         data = json.loads(result.value.bytes_.decode("utf-8"))
-
                         if "event" not in data:
                             continue
-
                         evt = data["event"]
-
                         if "contentStart" in evt:
                             current_role = evt["contentStart"].get("role")
-
                         elif "textOutput" in evt:
                             text = evt["textOutput"]["content"]
                             if current_role == "USER":
@@ -196,150 +195,40 @@ class BedrockClient:
                                     on_transcription(" ".join(user_texts))
                             elif current_role == "ASSISTANT":
                                 assistant_texts.append(text)
-
                         elif "audioOutput" in evt:
                             audio_b64 = evt["audioOutput"].get("content", "")
                             if audio_b64:
                                 audio_chunks.append(audio_b64)
-
                         elif "completionEnd" in evt:
                             break
-
             except StopAsyncIteration:
                 pass
             except Exception as e:
                 collection_error = e
                 logger.error("Error collecting Sonic responses", exc_info=True)
 
-        # Start collecting responses in background
         response_task = asyncio.create_task(_collect_responses())
 
-        # 1. Session start
-        await _send_event(stream, json.dumps({
-            "event": {
-                "sessionStart": {
-                    "inferenceConfiguration": {
-                        "maxTokens": 1024,
-                        "topP": 0.9,
-                        "temperature": 0.7,
-                    }
-                }
-            }
-        }))
+        await _send_event(stream, {"event": {"sessionStart": {"inferenceConfiguration": {"maxTokens": 1024, "topP": 0.95, "temperature": 0.7}}}})
+        await _send_event(stream, {"event": {"promptStart": {"promptName": prompt_name, "textOutputConfiguration": {"mediaType": "text/plain"}, "audioOutputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 24000, "sampleSizeBits": 16, "channelCount": 1, "voiceId": "tiffany", "encoding": "base64", "audioType": "SPEECH"}}}})
 
-        # 2. Prompt start
-        await _send_event(stream, json.dumps({
-            "event": {
-                "promptStart": {
-                    "promptName": prompt_name,
-                    "textOutputConfiguration": {"mediaType": "text/plain"},
-                    "audioOutputConfiguration": {
-                        "mediaType": "audio/lpcm",
-                        "sampleRateHertz": 24000,
-                        "sampleSizeBits": 16,
-                        "channelCount": 1,
-                        "voiceId": "matthew",
-                        "encoding": "base64",
-                        "audioType": "SPEECH",
-                    },
-                }
-            }
-        }))
-
-        # 3. System prompt
         if system_prompt:
-            await _send_event(stream, json.dumps({
-                "event": {
-                    "contentStart": {
-                        "promptName": prompt_name,
-                        "contentName": content_name,
-                        "type": "TEXT",
-                        "interactive": False,
-                        "role": "SYSTEM",
-                        "textInputConfiguration": {"mediaType": "text/plain"},
-                    }
-                }
-            }))
+            await _send_event(stream, {"event": {"contentStart": {"promptName": prompt_name, "contentName": content_name, "type": "TEXT", "interactive": False, "role": "SYSTEM", "textInputConfiguration": {"mediaType": "text/plain"}}}})
+            await _send_event(stream, {"event": {"textInput": {"promptName": prompt_name, "contentName": content_name, "content": system_prompt}}})
+            await _send_event(stream, {"event": {"contentEnd": {"promptName": prompt_name, "contentName": content_name}}})
 
-            await _send_event(stream, json.dumps({
-                "event": {
-                    "textInput": {
-                        "promptName": prompt_name,
-                        "contentName": content_name,
-                        "content": system_prompt,
-                    }
-                }
-            }))
+        await _send_event(stream, {"event": {"contentStart": {"promptName": prompt_name, "contentName": audio_content_name, "type": "AUDIO", "interactive": True, "role": "USER", "audioInputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 16000, "sampleSizeBits": 16, "channelCount": 1, "audioType": "SPEECH", "encoding": "base64"}}}})
 
-            await _send_event(stream, json.dumps({
-                "event": {
-                    "contentEnd": {
-                        "promptName": prompt_name,
-                        "contentName": content_name,
-                    }
-                }
-            }))
-
-        # 4. Audio input
-        await _send_event(stream, json.dumps({
-            "event": {
-                "contentStart": {
-                    "promptName": prompt_name,
-                    "contentName": audio_content_name,
-                    "type": "AUDIO",
-                    "interactive": True,
-                    "role": "USER",
-                    "audioInputConfiguration": {
-                        "mediaType": "audio/lpcm",
-                        "sampleRateHertz": 16000,
-                        "sampleSizeBits": 16,
-                        "channelCount": 1,
-                        "audioType": "SPEECH",
-                        "encoding": "base64",
-                    },
-                }
-            }
-        }))
-
-        # Send audio in chunks (8KB per chunk)
         chunk_size = 8192
         for i in range(0, len(audio_pcm), chunk_size):
-            chunk = audio_pcm[i : i + chunk_size]
-            audio_b64 = base64.b64encode(chunk).decode("utf-8")
-            await _send_event(stream, json.dumps({
-                "event": {
-                    "audioInput": {
-                        "promptName": prompt_name,
-                        "contentName": audio_content_name,
-                        "content": audio_b64,
-                    }
-                }
-            }))
+            chunk = audio_pcm[i: i + chunk_size]
+            await _send_event(stream, {"event": {"audioInput": {"promptName": prompt_name, "contentName": audio_content_name, "content": base64.b64encode(chunk).decode("utf-8")}}})
 
-        # 5. End audio input
-        await _send_event(stream, json.dumps({
-            "event": {
-                "contentEnd": {
-                    "promptName": prompt_name,
-                    "contentName": audio_content_name,
-                }
-            }
-        }))
-
-        # 6. End prompt
-        await _send_event(stream, json.dumps({
-            "event": {
-                "promptEnd": {"promptName": prompt_name}
-            }
-        }))
-
-        # 7. End session
-        await _send_event(stream, json.dumps({
-            "event": {"sessionEnd": {}}
-        }))
+        await _send_event(stream, {"event": {"contentEnd": {"promptName": prompt_name, "contentName": audio_content_name}}})
+        await _send_event(stream, {"event": {"promptEnd": {"promptName": prompt_name}}})
+        await _send_event(stream, {"event": {"sessionEnd": {}}})
         await stream.input_stream.close()
 
-        # Wait for all responses with a timeout to avoid hanging the Lambda
         try:
             await asyncio.wait_for(response_task, timeout=60.0)
         except asyncio.TimeoutError:
@@ -348,26 +237,110 @@ class BedrockClient:
             raise RuntimeError("Nova Sonic response collection timed out")
 
         if collection_error:
-            logger.error(
-                "Nova Sonic collection ended with error",
-                extra={"error": str(collection_error)},
-            )
             raise collection_error
 
-        transcription = " ".join(user_texts).strip()
-        response_text = " ".join(assistant_texts).strip()
-
-        logger.info(
-            "Nova Sonic completed",
-            extra={
-                "transcription_length": len(transcription),
-                "response_length": len(response_text),
-                "audio_chunk_count": len(audio_chunks),
-            },
-        )
-
         return {
-            "transcription": transcription,
-            "response_text": response_text,
+            "transcription": " ".join(user_texts).strip(),
+            "response_text": " ".join(assistant_texts).strip(),
             "audio_chunks": audio_chunks,
         }
+
+    async def invoke_sonic_stream(self) -> "SonicStreamController":
+        """Open a persistent bidirectional stream to Nova Sonic 2.
+
+        Returns a SonicStreamController for incremental audio I/O.
+        Used by the Lambda handler for one-shot interactions.
+        For real-time streaming, use the voice_server/ module instead.
+        """
+        try:
+            from aws_sdk_bedrock_runtime.client import (
+                BedrockRuntimeClient as SonicClient,
+                InvokeModelWithBidirectionalStreamOperationInput,
+            )
+            from aws_sdk_bedrock_runtime.config import Config as SonicConfig
+            from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
+        except ImportError as e:
+            raise RuntimeError(
+                f"Nova Sonic 2 SDK not available: {e}. "
+                "Ensure aws-sdk-bedrock-runtime and smithy-aws-core are installed."
+            ) from e
+
+        config = SonicConfig(
+            endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
+            region=self.region,
+            aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
+        )
+        sonic_client = SonicClient(config=config)
+
+        stream = await sonic_client.invoke_model_with_bidirectional_stream(
+            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_sonic)
+        )
+
+        return SonicStreamController(stream)
+
+
+class SonicStreamController:
+    """Wraps a Nova Sonic 2 bidirectional stream for real-time audio I/O."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    async def _send(self, event_dict: dict):
+        from aws_sdk_bedrock_runtime.models import (
+            BidirectionalInputPayloadPart,
+            InvokeModelWithBidirectionalStreamInputChunk,
+        )
+        chunk = InvokeModelWithBidirectionalStreamInputChunk(
+            value=BidirectionalInputPayloadPart(
+                bytes_=json.dumps(event_dict).encode("utf-8")
+            )
+        )
+        await self._stream.input_stream.send(chunk)
+
+    async def send_session_start(self, max_tokens: int = 1024, top_p: float = 0.95, temperature: float = 0.7):
+        await self._send({"event": {"sessionStart": {"inferenceConfiguration": {"maxTokens": max_tokens, "topP": top_p, "temperature": temperature}}}})
+
+    async def send_prompt_start(self, prompt_name: str, voice_id: str = "tiffany"):
+        await self._send({"event": {"promptStart": {"promptName": prompt_name, "textOutputConfiguration": {"mediaType": "text/plain"}, "audioOutputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 24000, "sampleSizeBits": 16, "channelCount": 1, "voiceId": voice_id, "encoding": "base64", "audioType": "SPEECH"}}}})
+
+    async def send_system_prompt(self, prompt_name: str, text: str):
+        content_name = str(uuid.uuid4())
+        await self._send({"event": {"contentStart": {"promptName": prompt_name, "contentName": content_name, "type": "TEXT", "interactive": False, "role": "SYSTEM", "textInputConfiguration": {"mediaType": "text/plain"}}}})
+        await self._send({"event": {"textInput": {"promptName": prompt_name, "contentName": content_name, "content": text}}})
+        await self._send({"event": {"contentEnd": {"promptName": prompt_name, "contentName": content_name}}})
+
+    async def start_audio_input(self, prompt_name: str) -> str:
+        content_name = str(uuid.uuid4())
+        await self._send({"event": {"contentStart": {"promptName": prompt_name, "contentName": content_name, "type": "AUDIO", "interactive": True, "role": "USER", "audioInputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 16000, "sampleSizeBits": 16, "channelCount": 1, "audioType": "SPEECH", "encoding": "base64"}}}})
+        return content_name
+
+    async def send_audio_chunk(self, prompt_name: str, content_name: str, pcm_base64: str):
+        await self._send({"event": {"audioInput": {"promptName": prompt_name, "contentName": content_name, "content": pcm_base64}}})
+
+    async def end_audio_input(self, prompt_name: str, content_name: str):
+        await self._send({"event": {"contentEnd": {"promptName": prompt_name, "contentName": content_name}}})
+
+    async def end_prompt(self, prompt_name: str):
+        await self._send({"event": {"promptEnd": {"promptName": prompt_name}}})
+
+    async def end_session(self):
+        await self._send({"event": {"sessionEnd": {}}})
+
+    async def close(self):
+        try:
+            await self._stream.input_stream.close()
+        except Exception:
+            pass
+
+    async def response_events(self):
+        """Async generator yielding parsed event dicts from the response stream."""
+        try:
+            while True:
+                output = await self._stream.await_output()
+                result = await output[1].receive()
+                if result.value and result.value.bytes_:
+                    data = json.loads(result.value.bytes_.decode("utf-8"))
+                    if "event" in data:
+                        yield data["event"]
+        except StopAsyncIteration:
+            pass
