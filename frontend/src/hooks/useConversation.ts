@@ -1,22 +1,46 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { useWebSocket } from './useWebSocket';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
-import { createChunkPlayer, type AudioChunkPlayer } from '@/services/audio';
-import { api } from '@/services/api';
+import { createChunkPlayer, playLPCMAudio, type AudioChunkPlayer } from '@/services/audio';
 import type { Message } from '@/types/conversation';
 
+// Lambda WebSocket — text chat, file upload, session restore
 const WS_URL = import.meta.env.VITE_WEBSOCKET_URL || '';
 
+// Standalone voice server — Nova Sonic bidirectional streaming
+// Falls back to the same WS_URL if not separately configured (monorepo local dev)
+const VOICE_WS_URL = import.meta.env.VITE_VOICE_WS_URL || WS_URL;
+
 export function useConversation() {
-  const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL);
   const conversationStore = useConversationStore();
   const updateDiagram = useDiagramStore((s) => s.updateDiagram);
   const restoreDiagram = useDiagramStore((s) => s.restoreDiagram);
   const { setLoading, setError } = useUIStore();
   const chunkPlayerRef = useRef<AudioChunkPlayer | null>(null);
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  // Ref to hold handleIncomingMessage so the voice WS callback always uses the latest version
+  const handleIncomingRef = useRef<(data: Record<string, unknown>) => void>(() => {});
+
+  // ── Two separate WebSocket connections ──
+  const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL);
+
+  // Voice WS uses direct onMessage callback to avoid React state batching
+  // dropping rapid audio_chunk messages
+  const voiceOnMessage = useCallback((event: MessageEvent) => {
+    if (VOICE_WS_URL === WS_URL) return;
+    try {
+      handleIncomingRef.current(JSON.parse(event.data));
+    } catch (err) {
+      console.error('[ArchFlow] Failed to handle voice WS message:', err);
+    }
+  }, []);
+
+  const {
+    isConnected: isVoiceConnected,
+    sendMessage: voiceWsSend,
+  } = useWebSocket(VOICE_WS_URL, voiceOnMessage);
 
   // Cleanup audio player on unmount
   useEffect(() => {
@@ -48,57 +72,76 @@ export function useConversation() {
     }
   }, [isConnected]);
 
-  // Handle incoming WebSocket messages
-  useEffect(() => {
-    if (!lastMessage) return;
-
-    // Skip empty frames (e.g. from Lambda returning no body)
-    if (!lastMessage.data) return;
-
-    try {
-      const data = JSON.parse(lastMessage.data);
+  // ── Handler shared by both sockets ──
+  // Keep ref in sync so the voice WS direct callback always uses the latest closure
+  const handleIncomingMessage = useCallback(
+    (data: Record<string, unknown>) => {
+      if (data.type === 'voice_session_started') {
+        if (data.sessionId) {
+          conversationStore.setSessionId(data.sessionId as string);
+        }
+      }
 
       if (data.type === 'voice_transcription') {
-        conversationStore.updateLastUserMessage(data.payload.text);
+        conversationStore.updateLastUserMessage((data.payload as { text: string }).text);
       }
 
       if (data.type === 'voice_status') {
-        conversationStore.setVoiceStatus({
-          stage: data.payload.stage,
-          message: data.payload.message,
-        });
+        const p = data.payload as { stage: string; message: string };
+        conversationStore.setVoiceStatus({ stage: p.stage, message: p.message });
       }
 
       if (data.type === 'ai_response') {
-        // Capture sessionId from first backend response
         if (data.sessionId) {
-          conversationStore.setSessionId(data.sessionId);
+          conversationStore.setSessionId(data.sessionId as string);
         }
 
-        // If voice transcription came back, update placeholder message
-        if (data.payload.transcription) {
-          conversationStore.updateLastUserMessage(data.payload.transcription);
+        const payload = data.payload as {
+          transcription?: string;
+          text: string;
+          agent: string;
+          diagram?: string;
+          audioUrl?: string;
+          hasAudio?: boolean;
+        };
+
+        if (payload.transcription) {
+          conversationStore.updateLastUserMessage(payload.transcription);
         }
 
-        // Add assistant message to conversation
         const assistantMsg: Message = {
           role: 'assistant',
-          content: data.payload.text,
+          content: payload.text,
           timestamp: new Date().toISOString(),
-          agent: data.payload.agent,
+          agent: payload.agent,
         };
         conversationStore.addMessage(assistantMsg);
 
-        // Update diagram if backend included one
-        if (data.payload.diagram) {
-          updateDiagram(data.payload.diagram, data.payload.text);
+        if (payload.diagram) {
+          updateDiagram(payload.diagram, payload.text);
         }
 
-        // Prepare audio player if response includes audio
-        if (data.payload.hasAudio) {
-          chunkPlayerRef.current?.stop();
-          chunkPlayerRef.current = createChunkPlayer(24000, (playing) => {
-            conversationStore.setAudioPlaying(playing);
+        // ── Voice response: forward transcription to Lambda for diagram generation ──
+        // Nova Sonic gives a quick conversational reply. We detect a voice response by
+        // the presence of `transcription` — Lambda text responses never include it.
+        if (payload.transcription) {
+          // Forward transcription to Lambda → orchestrator → diagram generation
+          const currentDiagram = useDiagramStore.getState().currentSyntax;
+          wsSend({
+            action: 'message',
+            sessionId: conversationStore.sessionId,
+            text: payload.transcription,
+            currentDiagram: currentDiagram || undefined,
+          });
+        }
+
+        if (payload.audioUrl) {
+          conversationStore.setAudioPlaying(true);
+          playLPCMAudio(payload.audioUrl, 24000, (_playing) => {
+            conversationStore.setAudioPlaying(false);
+          }).catch((err) => {
+            console.error('[ArchFlow] Audio playback failed:', err);
+            conversationStore.setAudioPlaying(false);
           });
         }
 
@@ -109,7 +152,15 @@ export function useConversation() {
       }
 
       if (data.type === 'audio_chunk') {
-        chunkPlayerRef.current?.addChunk(data.payload.audio);
+        // Create player lazily on first chunk — chunks arrive BEFORE ai_response
+        if (!chunkPlayerRef.current) {
+          chunkPlayerRef.current = createChunkPlayer(24000, (playing) => {
+            conversationStore.setAudioPlaying(playing);
+          });
+        }
+        chunkPlayerRef.current.addChunk(
+          (data.payload as { audio: string }).audio,
+        );
       }
 
       if (data.type === 'audio_end') {
@@ -117,18 +168,18 @@ export function useConversation() {
       }
 
       if (data.type === 'session_restored') {
+        const payload = data.payload as {
+          messages: Message[];
+          currentDiagram?: string;
+          diagramVersions?: unknown[];
+        };
         conversationStore.restoreSession({
-          messages: data.payload.messages,
-          sessionId: data.sessionId,
+          messages: payload.messages,
+          sessionId: data.sessionId as string,
         });
-
-        if (data.payload.currentDiagram) {
-          restoreDiagram(
-            data.payload.currentDiagram,
-            data.payload.diagramVersions || []
-          );
+        if (payload.currentDiagram) {
+          restoreDiagram(payload.currentDiagram, (payload.diagramVersions as []) || []);
         }
-
         setLoading(false);
       }
 
@@ -139,33 +190,35 @@ export function useConversation() {
       }
 
       if (data.type === 'file_status') {
-        // File processing status update — handled by useFileUpload via callback
-        if (data.payload.status === 'error') {
-          setError(data.payload.message || 'File processing failed');
+        const p = data.payload as { status: string; message?: string };
+        if (p.status === 'error') {
+          setError(p.message || 'File processing failed');
         }
       }
 
       if (data.type === 'file_analysis') {
-        // File analysis complete — add result to conversation
+        const p = data.payload as {
+          fileName?: string;
+          summary?: string;
+          diagram?: string;
+        };
         const analysisMsg: Message = {
           role: 'assistant',
-          content: `**File analyzed: ${data.payload.fileName || 'document'}**\n\n${data.payload.summary || 'Analysis complete.'}`,
+          content: `**File analyzed: ${p.fileName || 'document'}**\n\n${p.summary || 'Analysis complete.'}`,
           timestamp: new Date().toISOString(),
           agent: 'context_analyzer',
         };
         conversationStore.addMessage(analysisMsg);
-
-        // If the analysis included a diagram update
-        if (data.payload.diagram) {
-          updateDiagram(data.payload.diagram, 'Generated from uploaded file');
+        if (p.diagram) {
+          updateDiagram(p.diagram, 'Generated from uploaded file');
         }
-
         setLoading(false);
       }
 
       if (data.type === 'diagram_update') {
-        if (data.payload?.diagram) {
-          updateDiagram(data.payload.diagram, 'Diagram update');
+        const p = data.payload as { diagram?: string };
+        if (p?.diagram) {
+          updateDiagram(p.diagram, 'Diagram update');
         }
       }
 
@@ -173,24 +226,38 @@ export function useConversation() {
         console.error('[ArchFlow] Backend error:', data.payload);
         clearTimeout(responseTimeoutRef.current);
         conversationStore.setVoiceStatus(null);
-        // Update any placeholder voice message to show it failed
         conversationStore.updateLastUserMessage('[Voice message failed]');
-        setError(data.payload.message);
+        setError((data.payload as { message: string }).message);
         setLoading(false);
       }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Keep ref in sync for the voice WS direct callback
+  handleIncomingRef.current = handleIncomingMessage;
+
+  // Handle messages from the Lambda text WebSocket
+  useEffect(() => {
+    if (!lastMessage?.data) return;
+    try {
+      handleIncomingMessage(JSON.parse(lastMessage.data));
     } catch (err) {
-      console.error('[ArchFlow] Failed to handle WebSocket message:', err, lastMessage?.data);
+      console.error('[ArchFlow] Failed to handle text WS message:', err, lastMessage?.data);
       clearTimeout(responseTimeoutRef.current);
       setError('Failed to parse server response');
       setLoading(false);
     }
   }, [lastMessage]);
 
-  // Send a text message to the backend
+  // Voice WS messages are handled via direct onMessage callback (see voiceOnMessage above)
+  // to avoid React state batching dropping rapid audio_chunk messages.
+
+  // ── Text message ──
   const sendMessage = (content: string) => {
     if (!content.trim()) return;
 
-    // Add user message to local store immediately
     const userMsg: Message = {
       role: 'user',
       content,
@@ -198,10 +265,7 @@ export function useConversation() {
     };
     conversationStore.addMessage(userMsg);
 
-    // Include current diagram so AI always has latest state
     const currentDiagram = useDiagramStore.getState().currentSyntax;
-
-    // Send to backend via WebSocket
     wsSend({
       action: 'message',
       sessionId: conversationStore.sessionId,
@@ -213,69 +277,137 @@ export function useConversation() {
     setError(null);
   };
 
-  // Send a voice recording to the backend via S3 upload
-  const sendVoiceMessage = async (audioBlob: Blob, mimeType?: string) => {
-    const effectiveMime = mimeType || 'audio/webm;codecs=opus';
-    console.log('[ArchFlow] Voice blob size:', audioBlob.size, 'mimeType:', effectiveMime);
+  // ── Streaming voice session ──
+  // These events go to the voice server's WebSocket, NOT the Lambda one.
+  const audioSeqRef = useRef(0);
+  // Tracks state sent to the voice server so we can send the proper Nova Sonic events
+  const promptNameRef = useRef<string>('');
+  const audioContentNameRef = useRef<string>('');
 
-    // Add placeholder user message immediately
+  /** Start a streaming voice session — sends the Nova Sonic event sequence to the voice server. */
+  const startVoiceSession = useCallback(() => {
+    const currentDiagram = useDiagramStore.getState().currentSyntax;
+    audioSeqRef.current = 0;
+
+    const promptName = crypto.randomUUID();
+    const audioContentName = crypto.randomUUID();
+    const systemContentName = crypto.randomUUID();
+    promptNameRef.current = promptName;
+    audioContentNameRef.current = audioContentName;
+
+
     const userMsg: Message = {
       role: 'user',
-      content: '[Voice message — transcribing...]',
+      content: '[Listening...]',
       timestamp: new Date().toISOString(),
     };
     conversationStore.addMessage(userMsg);
-    setLoading(true);
     setError(null);
 
-    try {
-      // 1. Get presigned URL from existing /upload endpoint
-      const sessionId = conversationStore.sessionId || 'anonymous';
-      const ext = effectiveMime.includes('mp4') ? 'mp4' : effectiveMime.includes('ogg') ? 'ogg' : 'webm';
-      const fileName = `voice-${Date.now()}.${ext}`;
-      const { uploadUrl, fileKey } = await api.uploadFile(
-        sessionId,
-        fileName,
-        effectiveMime.split(';')[0], // strip codec info for MIME validation
-        audioBlob.size,
-      );
-      console.log('[ArchFlow] Got presigned URL, uploading to S3:', fileKey);
+    // 1. Session start
+    voiceWsSend({ event: { sessionStart: { inferenceConfiguration: { maxTokens: 1024, topP: 0.95, temperature: 0.7 } } } });
 
-      // 2. Upload raw audio blob directly to S3
-      // Use the same stripped MIME type that was used to generate the presigned URL
-      const strippedMime = effectiveMime.split(';')[0];
-      const uploadResponse = await fetch(uploadUrl, {
-        method: 'PUT',
-        body: audioBlob,
-        headers: { 'Content-Type': strippedMime },
-      });
-      if (!uploadResponse.ok) {
-        throw new Error(`S3 upload failed: ${uploadResponse.status}`);
-      }
-      console.log('[ArchFlow] Audio uploaded to S3 successfully');
+    // 2. Prompt start — text + audio output.
+    // AudioOutputConfiguration is REQUIRED by Nova Sonic\u2019s API.
+    // Audio chunks will be received if awscrt delivers them, and browser TTS
+    // speaks the text response as a fallback regardless.
+    voiceWsSend({
+      event: {
+        promptStart: {
+          promptName,
+          textOutputConfiguration: { mediaType: 'text/plain' },
+          audioOutputConfiguration: {
+            mediaType: 'audio/lpcm',
+            sampleRateHertz: 24000,
+            sampleSizeBits: 16,
+            channelCount: 1,
+            voiceId: 'tiffany',
+            encoding: 'base64',
+            audioType: 'SPEECH',
+          },
+        },
+      },
+    });
 
-      // 3. Send lightweight WebSocket message with S3 key
-      const currentDiagram = useDiagramStore.getState().currentSyntax;
-      wsSend({
-        action: 'voice',
-        sessionId,
-        audioKey: fileKey,
-        mimeType: effectiveMime,
-        currentDiagram: currentDiagram || undefined,
-      });
 
-      // 4. Timeout safety (90s for S3 download + Nova Sonic processing)
-      clearTimeout(responseTimeoutRef.current);
-      responseTimeoutRef.current = setTimeout(() => {
-        setLoading(false);
-        setError('Voice processing timed out. Please try again.');
-      }, 90_000);
-    } catch (err) {
-      console.error('[ArchFlow] Voice upload failed:', err);
-      setLoading(false);
-      setError((err as Error).message || 'Voice upload failed. Please try again.');
+    // 3. System prompt (context-aware: include current diagram)
+    let systemPrompt =
+      'You are ArchFlow, an expert AI software architect. ' +
+      'Help the user design and discuss software system architecture through natural conversation. ' +
+      'Keep responses conversational, under 4–5 sentences, suitable for speech.';
+    if (currentDiagram) {
+      systemPrompt += ` The user is currently working on this architecture diagram:\n${currentDiagram}`;
     }
-  };
+
+    voiceWsSend({ event: { contentStart: { promptName, contentName: systemContentName, type: 'TEXT', interactive: false, role: 'SYSTEM', textInputConfiguration: { mediaType: 'text/plain' } } } });
+    voiceWsSend({ event: { textInput: { promptName, contentName: systemContentName, content: systemPrompt } } });
+    voiceWsSend({ event: { contentEnd: { promptName, contentName: systemContentName } } });
+
+    // 4. Audio content start
+    voiceWsSend({
+      event: {
+        contentStart: {
+          promptName,
+          contentName: audioContentName,
+          type: 'AUDIO',
+          interactive: true,
+          role: 'USER',
+          audioInputConfiguration: {
+            mediaType: 'audio/lpcm',
+            sampleRateHertz: 16000,
+            sampleSizeBits: 16,
+            channelCount: 1,
+            audioType: 'SPEECH',
+            encoding: 'base64',
+          },
+        },
+      },
+    });
+  }, [voiceWsSend, conversationStore, setError]);
+
+  /** Send a single PCM audio chunk (base64) to the voice server. */
+  const sendAudioChunk = useCallback(
+    (pcmBase64: string) => {
+      audioSeqRef.current += 1;
+      voiceWsSend({
+        event: {
+          audioInput: {
+            promptName: promptNameRef.current,
+            contentName: audioContentNameRef.current,
+            content: pcmBase64,
+          },
+        },
+      });
+    },
+    [voiceWsSend],
+  );
+
+  /** End the streaming voice session — sends only contentEnd (end of audio input).
+   *
+   * NOTE: We do NOT send promptEnd or sessionEnd here.
+   * The server sends those to Bedrock automatically after it receives
+   * completionEnd, which is when Bedrock has finished generating the response.
+   * Sending promptEnd/sessionEnd immediately from the browser was killing the
+   * Nova Sonic stream before the response could be delivered.
+   */
+  const stopVoiceSession = useCallback(() => {
+    const promptName = promptNameRef.current;
+    const audioContentName = audioContentNameRef.current;
+
+    // Signal end of audio input to Bedrock — server + Bedrock do the rest
+    voiceWsSend({ event: { contentEnd: { promptName, contentName: audioContentName } } });
+
+    setLoading(true);
+
+    // Safety timeout — server should respond well within 30 s
+    clearTimeout(responseTimeoutRef.current);
+    responseTimeoutRef.current = setTimeout(() => {
+      conversationStore.setVoiceStatus(null);
+      setLoading(false);
+      setError('Voice processing timed out. Please try again.');
+    }, 30_000);
+  }, [voiceWsSend, conversationStore, setLoading, setError]);
+
 
   const stopAudioPlayback = () => {
     chunkPlayerRef.current?.stop();
@@ -286,8 +418,11 @@ export function useConversation() {
     sessionId: conversationStore.sessionId,
     isRecording: conversationStore.isRecording,
     isConnected,
+    isVoiceConnected,
     sendMessage,
-    sendVoiceMessage,
+    startVoiceSession,
+    sendAudioChunk,
+    stopVoiceSession,
     stopAudioPlayback,
     sendWsMessage: wsSend,
   };

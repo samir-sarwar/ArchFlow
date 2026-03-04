@@ -3,13 +3,15 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const MAX_RECONNECT_DELAY = 10_000;
 const INITIAL_RECONNECT_DELAY = 1_000;
 
-export function useWebSocket(url: string) {
+export function useWebSocket(url: string, onMessage?: (event: MessageEvent) => void) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<MessageEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
   const reconnectDelay = useRef(INITIAL_RECONNECT_DELAY);
   const mountedRef = useRef(true);
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
     if (!url || !mountedRef.current) return;
@@ -47,7 +49,12 @@ export function useWebSocket(url: string) {
       }, reconnectDelay.current);
     };
 
-    ws.onmessage = (event) => setLastMessage(event);
+    ws.onmessage = (event) => {
+      console.debug('[ArchFlow] WS recv', typeof event.data === 'string' ? event.data.length : '(binary)', 'bytes');
+      // Call direct callback first (avoids React state batching dropping rapid messages)
+      onMessageRef.current?.(event);
+      setLastMessage(event);
+    };
 
     ws.onerror = () => {
       // onclose will fire after onerror, so reconnect logic is handled there
