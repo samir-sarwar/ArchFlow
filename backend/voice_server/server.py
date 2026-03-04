@@ -24,6 +24,7 @@ import boto3
 import websockets
 
 from .session_manager import S2sSessionManager
+from .db_client import VoiceSessionDBClient
 
 warnings.filterwarnings("ignore")
 
@@ -92,9 +93,36 @@ def _start_health_server(host: str, port: int):
         logger.warning("Could not start health check server: %s", exc)
 
 
+# ─── History summary builder ───
+
+def _build_history_summary(history: list[dict], max_chars: int = 350) -> str:
+    """Build a compact conversation summary to append to the system prompt."""
+    relevant = [
+        m for m in history
+        if m.get("role") in ("user", "assistant")
+        and isinstance(m.get("content"), str)
+        and m["content"].strip()
+    ]
+    if not relevant:
+        return ""
+    # Last 4 messages (2 turns) max
+    recent = relevant[-4:]
+    lines = ["Relevant prior conversation:"]
+    total = 0
+    for msg in recent:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        snippet = msg["content"].strip().replace("\n", " ")[:120]
+        line = f"- {role}: {snippet}"
+        if total + len(line) > max_chars:
+            break
+        lines.append(line)
+        total += len(line)
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 # ─── Nova Sonic → ArchFlow event translator ───
 
-async def _handle_nova_events(websocket, stream_manager: S2sSessionManager):
+async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, session_id: str | None, db_client: VoiceSessionDBClient):
     """
     Read raw Nova Sonic events from the output queue and translate them
     into ArchFlow WebSocket messages for the browser.
@@ -138,6 +166,14 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager):
 
         if has_audio:
             await _send({"type": "audio_end"})
+
+        if session_id and db_client and (transcription or full_text):
+            try:
+                # Run in a thread or just call it directly (boto3 is blocking, but it's okay for now or we use run_in_executor)
+                # Since append_voice_interaction is blocking, it's better to use asyncio.to_thread
+                await asyncio.to_thread(db_client.append_voice_interaction, session_id, transcription, full_text)
+            except Exception as e:
+                logger.error("Failed to save voice interaction to DB: %s", e)
 
     try:
         while True:
@@ -278,6 +314,11 @@ async def _websocket_handler(websocket):
     region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
     stream_manager: S2sSessionManager | None = None
     nova_task: asyncio.Task | None = None
+    session_id: str | None = None
+    system_content_name: str | None = None
+    
+    # Initialize DB client safely within handler
+    db_client = VoiceSessionDBClient(region_name=region)
 
     logger.info("New WebSocket connection from %s", websocket.remote_address)
 
@@ -310,10 +351,15 @@ async def _websocket_handler(websocket):
                 if event_type == "sessionStart":
                     await _cleanup()  # clean up any previous session
 
-                    logger.info("sessionStart — initialising Nova Sonic stream (region=%s)", region)
+                    # Extract sessionId if provided by frontend
+                    session_id = data["event"]["sessionStart"].get("sessionId")
+
+                    logger.info("sessionStart — initialising Nova Sonic stream (region=%s, session_id=%s)", region, session_id)
                     stream_manager = S2sSessionManager(region=region)
                     # Set up diagram callback before initializing
                     async def _on_diagram(diagram_syntax: str):
+                        if session_id:
+                            await asyncio.to_thread(db_client.save_diagram, session_id, diagram_syntax)
                         try:
                             await websocket.send(json.dumps({
                                 "type": "diagram_update",
@@ -328,7 +374,7 @@ async def _websocket_handler(websocket):
                         await stream_manager.initialize_stream()
                         # Start the translator task
                         nova_task = asyncio.create_task(
-                            _handle_nova_events(websocket, stream_manager)
+                            _handle_nova_events(websocket, stream_manager, session_id, db_client)
                         )
                         logger.info("Nova Sonic stream ready")
                     except Exception as exc:
@@ -362,10 +408,13 @@ async def _websocket_handler(websocket):
 
                     elif event_type == "contentStart":
                         content_type = data["event"]["contentStart"].get("type")
+                        role = data["event"]["contentStart"].get("role")
                         if content_type == "AUDIO":
                             stream_manager.audio_content_name = (
                                 data["event"]["contentStart"]["contentName"]
                             )
+                        if role == "SYSTEM":
+                            system_content_name = data["event"]["contentStart"]["contentName"]
                         await stream_manager.send_raw_event(data)
 
                     elif event_type == "audioInput":
@@ -375,17 +424,38 @@ async def _websocket_handler(websocket):
                         stream_manager.add_audio_chunk(prompt_name, content_name, audio_b64)
 
                     elif event_type == "textInput":
-                        # Extract current diagram from system prompt if present
                         content = data["event"]["textInput"].get("content", "")
+                        content_name = data["event"]["textInput"].get("contentName", "")
+                        # Extract current diagram from system prompt if present
                         if "Current architecture diagram:" in content:
                             stream_manager.current_diagram = content.split(
                                 "Current architecture diagram:\n", 1
                             )[-1].strip()
                             logger.info("Extracted current diagram context (%d chars)", len(stream_manager.current_diagram))
+                        # If this is the system prompt block and we have a session, enrich with history
+                        if system_content_name and content_name == system_content_name and session_id:
+                            try:
+                                history = await asyncio.to_thread(db_client.get_session_history, session_id)
+                                summary = _build_history_summary(history)
+                                if summary:
+                                    enriched = dict(data)
+                                    enriched["event"] = dict(data["event"])
+                                    enriched["event"]["textInput"] = dict(data["event"]["textInput"])
+                                    enriched["event"]["textInput"]["content"] = content + "\n\n" + summary
+                                    logger.info("Injecting history summary (%d chars) into system prompt for session %s", len(summary), session_id)
+                                    await stream_manager.send_raw_event(enriched)
+                                else:
+                                    await stream_manager.send_raw_event(data)
+                            except Exception as e:
+                                logger.error("Failed to inject history into system prompt: %s", e)
+                                await stream_manager.send_raw_event(data)
+                        else:
+                            await stream_manager.send_raw_event(data)
+
+                    elif event_type == "contentEnd":
                         await stream_manager.send_raw_event(data)
 
                     else:
-                        # contentEnd, etc. — forward directly
                         await stream_manager.send_raw_event(data)
 
             except json.JSONDecodeError:
