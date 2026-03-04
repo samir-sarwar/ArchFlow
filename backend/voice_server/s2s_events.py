@@ -3,9 +3,9 @@ S2S (Speech-to-Speech) event builders for Amazon Nova 2 Sonic.
 
 Adapted from:  amazon-nova-2-sonic/workshops/python-server/s2s_events.py
 Changes:
-  - Removed tool-use configurations (MCP, Strands, booking tools)
-  - Set ArchFlow's architecture advisor system prompt as default
-  - Configurable voice ID
+  - Added generateDiagram tool configuration for ArchFlow
+  - Updated system prompt to reference tool use
+  - Added tool result event builders (content_start_tool, tool_result)
 """
 
 import json
@@ -13,12 +13,42 @@ import json
 
 ARCHFLOW_SYSTEM_PROMPT = (
     "You are ArchFlow, an expert AI software architect. "
-    "You help users design and discuss software system architecture through natural conversation. "
-    "Listen carefully to what the user says about their system and provide clear, expert guidance. "
-    "When discussing components, services, databases, APIs, or architecture patterns, explain your "
-    "reasoning concisely and ask clarifying questions when needed. "
-    "Keep your spoken responses conversational and under 4–5 sentences so they feel natural when heard aloud."
+    "You help users design software system architecture through natural conversation. "
+    "When the user asks you to create, modify, visualize, or diagram any software architecture, "
+    "use the generateDiagram tool. Briefly describe what you plan to create, then call the tool. "
+    "After receiving the tool result, summarize what was created in the diagram. "
+    "Keep your spoken responses conversational and under 4-5 sentences so they feel natural when heard aloud."
 )
+
+ARCHFLOW_TOOL_CONFIG = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": "generateDiagram",
+                "description": (
+                    "Generate or update a Mermaid.js architecture diagram. "
+                    "Call this whenever the user asks to create, modify, visualize, "
+                    "or diagram a software architecture."
+                ),
+                "inputSchema": {
+                    "json": json.dumps({
+                        "type": "object",
+                        "properties": {
+                            "request": {
+                                "type": "string",
+                                "description": (
+                                    "What to diagram, including any specific components, "
+                                    "services, patterns, or modifications to the existing diagram"
+                                ),
+                            }
+                        },
+                        "required": ["request"],
+                    })
+                },
+            }
+        }
+    ]
+}
 
 
 class S2sEvent:
@@ -59,6 +89,8 @@ class S2sEvent:
     def prompt_start(prompt_name, audio_output_config=None, tool_config=None):
         if audio_output_config is None:
             audio_output_config = S2sEvent.DEFAULT_AUDIO_OUTPUT_CONFIG
+        if tool_config is None:
+            tool_config = ARCHFLOW_TOOL_CONFIG
         event = {
             "event": {
                 "promptStart": {
@@ -66,11 +98,10 @@ class S2sEvent:
                     "textOutputConfiguration": {"mediaType": "text/plain"},
                     "audioOutputConfiguration": audio_output_config,
                     "toolUseOutputConfiguration": {"mediaType": "application/json"},
+                    "toolConfiguration": tool_config,
                 }
             }
         }
-        if tool_config:
-            event["event"]["promptStart"]["toolConfiguration"] = tool_config
         return event
 
     @staticmethod
@@ -133,6 +164,41 @@ class S2sEvent:
         return {
             "event": {
                 "audioInput": {
+                    "promptName": prompt_name,
+                    "contentName": content_name,
+                    "content": content,
+                }
+            }
+        }
+
+    # ── Tool result events ──
+
+    @staticmethod
+    def content_start_tool(prompt_name, content_name, tool_use_id):
+        """Signal the start of a tool result being sent back to Bedrock."""
+        return {
+            "event": {
+                "contentStart": {
+                    "promptName": prompt_name,
+                    "contentName": content_name,
+                    "interactive": False,
+                    "type": "TOOL",
+                    "role": "TOOL",
+                    "toolResultInputConfiguration": {
+                        "toolUseId": tool_use_id,
+                        "type": "TEXT",
+                        "textInputConfiguration": {"mediaType": "text/plain"},
+                    },
+                }
+            }
+        }
+
+    @staticmethod
+    def tool_result(prompt_name, content_name, content):
+        """Send the tool result content back to Bedrock."""
+        return {
+            "event": {
+                "toolResult": {
                     "promptName": prompt_name,
                     "contentName": content_name,
                     "content": content,

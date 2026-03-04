@@ -176,9 +176,23 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager):
             event_type = list(evt.keys())[0] if evt else "unknown"
             logger.debug("Nova event: %s | role=%s", event_type, current_role)
 
+            # ── Skip tool protocol events (internal to Nova Sonic) ──
+            if "toolUse" in evt:
+                logger.info("toolUse event — tool=%s (handled by session_manager)", evt["toolUse"].get("toolName"))
+                continue
+
+            if "toolResult" in evt:
+                logger.debug("toolResult event (internal)")
+                continue
+
             # ── Track role per content block ──
             if "contentStart" in evt:
                 current_role = evt["contentStart"].get("role")
+                content_type = evt["contentStart"].get("type")
+                # Skip tool-related content blocks
+                if content_type == "TOOL" or current_role == "TOOL":
+                    logger.info("contentStart — type=TOOL (skipping)")
+                    continue
                 logger.info("contentStart — role=%s", current_role)
 
             # ── Text output ──
@@ -207,6 +221,10 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager):
                     })
 
             elif "contentEnd" in evt:
+                end_type = evt["contentEnd"].get("type")
+                if end_type == "TOOL":
+                    logger.info("contentEnd — type=TOOL (skipping)")
+                    continue
                 logger.info("contentEnd — role=%s", current_role)
 
             # ── Completion signals — any of these means the response is done ──
@@ -294,6 +312,18 @@ async def _websocket_handler(websocket):
 
                     logger.info("sessionStart — initialising Nova Sonic stream (region=%s)", region)
                     stream_manager = S2sSessionManager(region=region)
+                    # Set up diagram callback before initializing
+                    async def _on_diagram(diagram_syntax: str):
+                        try:
+                            await websocket.send(json.dumps({
+                                "type": "diagram_update",
+                                "payload": {"diagram": diagram_syntax},
+                            }))
+                        except websockets.exceptions.ConnectionClosed:
+                            pass
+
+                    stream_manager.on_diagram_generated = _on_diagram
+
                     try:
                         await stream_manager.initialize_stream()
                         # Start the translator task
@@ -344,8 +374,18 @@ async def _websocket_handler(websocket):
                         audio_b64 = data["event"]["audioInput"]["content"]
                         stream_manager.add_audio_chunk(prompt_name, content_name, audio_b64)
 
+                    elif event_type == "textInput":
+                        # Extract current diagram from system prompt if present
+                        content = data["event"]["textInput"].get("content", "")
+                        if "Current architecture diagram:" in content:
+                            stream_manager.current_diagram = content.split(
+                                "Current architecture diagram:\n", 1
+                            )[-1].strip()
+                            logger.info("Extracted current diagram context (%d chars)", len(stream_manager.current_diagram))
+                        await stream_manager.send_raw_event(data)
+
                     else:
-                        # textInput, contentEnd, etc. — forward directly
+                        # contentEnd, etc. — forward directly
                         await stream_manager.send_raw_event(data)
 
             except json.JSONDecodeError:

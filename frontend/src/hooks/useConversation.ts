@@ -121,19 +121,8 @@ export function useConversation() {
           updateDiagram(payload.diagram, payload.text);
         }
 
-        // ── Voice response: forward transcription to Lambda for diagram generation ──
-        // Nova Sonic gives a quick conversational reply. We detect a voice response by
-        // the presence of `transcription` — Lambda text responses never include it.
-        if (payload.transcription) {
-          // Forward transcription to Lambda → orchestrator → diagram generation
-          const currentDiagram = useDiagramStore.getState().currentSyntax;
-          wsSend({
-            action: 'message',
-            sessionId: conversationStore.sessionId,
-            text: payload.transcription,
-            currentDiagram: currentDiagram || undefined,
-          });
-        }
+        // Voice diagram generation is handled by Nova Sonic tool use (generateDiagram)
+        // — no need to forward transcription to Lambda.
 
         if (payload.audioUrl) {
           conversationStore.setAudioPlaying(true);
@@ -325,6 +314,32 @@ export function useConversation() {
             encoding: 'base64',
             audioType: 'SPEECH',
           },
+          toolUseOutputConfiguration: { mediaType: 'application/json' },
+          toolConfiguration: {
+            tools: [{
+              toolSpec: {
+                name: 'generateDiagram',
+                description:
+                  'Generate or update a Mermaid.js architecture diagram. ' +
+                  'Call this whenever the user asks to create, modify, visualize, ' +
+                  'or diagram a software architecture.',
+                inputSchema: {
+                  json: JSON.stringify({
+                    type: 'object',
+                    properties: {
+                      request: {
+                        type: 'string',
+                        description:
+                          'What to diagram, including any specific components, ' +
+                          'services, patterns, or modifications to the existing diagram',
+                      },
+                    },
+                    required: ['request'],
+                  }),
+                },
+              },
+            }],
+          },
         },
       },
     });
@@ -333,10 +348,13 @@ export function useConversation() {
     // 3. System prompt (context-aware: include current diagram)
     let systemPrompt =
       'You are ArchFlow, an expert AI software architect. ' +
-      'Help the user design and discuss software system architecture through natural conversation. ' +
-      'Keep responses conversational, under 4–5 sentences, suitable for speech.';
+      'You help users design software system architecture through natural conversation. ' +
+      'When the user asks you to create, modify, visualize, or diagram any software architecture, ' +
+      'use the generateDiagram tool. Briefly describe what you plan to create, then call the tool. ' +
+      'After receiving the tool result, summarize what was created in the diagram. ' +
+      'Keep your spoken responses conversational and under 4-5 sentences so they feel natural when heard aloud.';
     if (currentDiagram) {
-      systemPrompt += ` The user is currently working on this architecture diagram:\n${currentDiagram}`;
+      systemPrompt += `\n\nCurrent architecture diagram:\n${currentDiagram}`;
     }
 
     voiceWsSend({ event: { contentStart: { promptName, contentName: systemContentName, type: 'TEXT', interactive: false, role: 'SYSTEM', textInputConfiguration: { mediaType: 'text/plain' } } } });
