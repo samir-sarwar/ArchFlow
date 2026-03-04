@@ -1,0 +1,44 @@
+# Shared Context Between Voice and Text Systems
+
+This document outlines the plan to implement Option 2: having the Python Voice Server read from and write to DynamoDB to persist conversation history alongside the Text Chat Lambda.
+
+## Proposed Changes
+
+### Backend Voice Server
+
+#### [MODIFY] [backend/voice_server/server.py](file:///Users/samir.sarwar/dev/ArchFlow/backend/voice_server/server.py)
+- Import `boto3` and the [ConversationStateManager](file:///Users/samir.sarwar/dev/ArchFlow/backend/src/services/state_manager.py#13-110) equivalent logic (or directly use boto3). The standalone voice server currently doesn't share `src/` code easily, so I'll write a lightweight DynamoDB client block inside the voice server.
+- In [_websocket_handler](file:///Users/samir.sarwar/dev/ArchFlow/backend/voice_server/server.py#277-400), when a `sessionStart` occurs:
+  - Extract the `sessionId` sent from the frontend.
+  - Query DynamoDB for that session to retrieve past messages.
+  - Prepend the past conversation history to the Nova Sonic stream as initial `textInput` events before opening the mic.
+- In [_handle_nova_events](file:///Users/samir.sarwar/dev/ArchFlow/backend/voice_server/server.py#97-271) and when the session ends:
+  - Save the new voice interaction (user transcription + AI response) to the DynamoDB table for that `sessionId`.
+
+#### [MODIFY] [backend/template.yaml](file:///Users/samir.sarwar/dev/ArchFlow/backend/template.yaml)
+- The Python Voice Server needs IAM permissions to read/write from DynamoDB.
+- Wait, the Voice Server runs locally during dev (standalone Python script), not in Lambda. I will need to verify how it's deployed or executed in production. If it's pure local for now, the AWS credentials bootstrapped in [server.py](file:///Users/samir.sarwar/dev/ArchFlow/backend/voice_server/server.py) just need DynamoDB access. There's no AWS resource for the Voice Server in [template.yaml](file:///Users/samir.sarwar/dev/ArchFlow/backend/template.yaml) (it's a WebSocket API for the text chat and a local Python server for voice). So I don't need to change [template.yaml](file:///Users/samir.sarwar/dev/ArchFlow/backend/template.yaml) unless we are deploying the Voice Server to AWS ECS/EC2.
+
+### Frontend
+
+#### [MODIFY] [frontend/src/hooks/useConversation.ts](file:///Users/samir.sarwar/dev/ArchFlow/frontend/src/hooks/useConversation.ts)
+- Update `startVoiceSession` to send `sessionId` to the voice WS server in the `sessionStart` payload or as a new initial event.
+
+#### [NEW] `backend/voice_server/db_client.py`
+- Create a minimal DynamoDB client for the Voice Server using `boto3`.
+- `get_session_history(session_id)`
+- `append_voice_interaction(session_id, user_text, ai_text)`
+
+## Verification Plan
+
+### Automated Tests
+- N/A, no automated tests configured for this feature yet.
+
+### Manual Verification
+1. Open the frontend and send a text message: "My favorite color is blue."
+2. Start a voice session and ask: "What is my favorite color?"
+   - The Voice AI should know the answer is "blue".
+3. End the voice session.
+4. Send another text message: "What did we just talk about?"
+   - The Text Chat AI should know that we just talked about your favorite color in voice.
+5. Refresh the page to ensure the full mixed voice/text history is restored.
