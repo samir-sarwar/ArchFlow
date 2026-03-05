@@ -20,9 +20,10 @@ class ConversationStateManager:
         )
         self.table = dynamodb.Table(table_name)
 
-    async def create_session(self) -> str:
+    async def create_session(self, session_id: str | None = None) -> str:
         """Create a new conversation session."""
-        session_id = str(uuid.uuid4())
+        if session_id is None:
+            session_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
         self.table.put_item(
@@ -98,12 +99,13 @@ class ConversationStateManager:
             Key={"session_id": session_id},
             UpdateExpression=(
                 "SET current_diagram = :diagram, "
-                "diagram_versions = list_append(diagram_versions, :ver), "
+                "diagram_versions = list_append(if_not_exists(diagram_versions, :empty_list), :ver), "
                 "last_activity = :now"
             ),
             ExpressionAttributeValues={
                 ":diagram": syntax,
                 ":ver": [version.model_dump()],
                 ":now": datetime.utcnow().isoformat(),
+                ":empty_list": [],
             },
         )

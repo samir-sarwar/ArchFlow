@@ -9,6 +9,7 @@ class Message(BaseModel):
     content: str
     timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     agent: Optional[str] = None  # Which agent responded
+    isVoice: Optional[bool] = None  # Indicates if message came from voice
 
 
 class DiagramVersion(BaseModel):
