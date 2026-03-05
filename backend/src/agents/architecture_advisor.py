@@ -1,3 +1,5 @@
+import re
+
 from src.models import AgentResponse, ConversationContext
 from src.services.bedrock_client import BedrockClient
 from src.utils import logger
@@ -53,7 +55,8 @@ class ArchitectureAdvisor:
         )
 
         conversation = "\n".join(
-            f"{m.role}: {m.content}" for m in context.messages
+            f"{'[Voice] ' if m.isVoice else ''}{m.role}: {m.content}"
+            for m in context.messages
         )
 
         prompt = f"""Given this conversation about a software architecture:
@@ -72,10 +75,9 @@ Provide architecture advice. If appropriate, include a Mermaid.js diagram wrappe
 
         # Extract mermaid diagram if present
         diagram_update = None
-        if "```mermaid" in response_text:
-            start = response_text.index("```mermaid") + len("```mermaid")
-            end = response_text.index("```", start)
-            diagram_update = response_text[start:end].strip()
+        match = re.search(r"```mermaid\s*\n(.*?)```", response_text, re.DOTALL)
+        if match:
+            diagram_update = match.group(1).strip()
 
         return AgentResponse(
             text=response_text,

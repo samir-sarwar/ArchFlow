@@ -42,7 +42,8 @@ class RequirementsAnalyst:
         )
 
         conversation = "\n".join(
-            f"{m.role}: {m.content}" for m in context.messages
+            f"{'[Voice] ' if m.isVoice else ''}{m.role}: {m.content}"
+            for m in context.messages
         )
 
         prompt = f"""Given this architecture conversation:
