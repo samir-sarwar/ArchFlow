@@ -16,6 +16,11 @@ Given a user message, classify the intent as exactly one of:
 
 Respond with ONLY the intent string, nothing else."""
 
+GENERAL_CONVERSATION_PROMPT = """You are ArchFlow, a friendly AI software architecture assistant.
+The user is not asking about software architecture right now — they are making casual conversation.
+Respond naturally and briefly, as you would in normal conversation.
+Do not mention AWS, architecture, diagrams, or system design unless the user brings it up first."""
+
 
 class OrchestratorAgent:
     """Routes user requests to the appropriate specialist agent."""
@@ -60,6 +65,21 @@ class OrchestratorAgent:
 
         return intent
 
+    async def _handle_general(self, message: str, context: ConversationContext) -> AgentResponse:
+        """Handle casual / off-topic messages with a lightweight conversational response."""
+        recent = [m for m in context.messages[-6:] if m.role in ("user", "assistant")]
+        history_lines = [
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content[:200]}"
+            for m in recent
+        ]
+        history_str = "\n".join(history_lines) if history_lines else "(no prior conversation)"
+        prompt = f"Recent conversation:\n{history_str}\n\nUser's latest message: {message}"
+        response = await self.bedrock.invoke_lite(
+            prompt=prompt,
+            system_prompt=GENERAL_CONVERSATION_PROMPT,
+        )
+        return AgentResponse(text=response, agent_used="orchestrator")
+
     async def route_request(
         self, message: str, context: ConversationContext
     ) -> AgentResponse:
@@ -84,6 +104,8 @@ class OrchestratorAgent:
                 return await self.agents["generator"].process(context)
             elif intent == IntentType.ANALYZE_CONTEXT:
                 return await self.agents["context"].process(context)
+            elif intent == IntentType.GENERAL:
+                return await self._handle_general(message, context)
             else:
                 return await self.agents["advisor"].process(context)
         except Exception:

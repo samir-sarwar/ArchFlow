@@ -42,7 +42,8 @@ class DiagramGenerator:
         )
 
         conversation = "\n".join(
-            f"{m.role}: {m.content}" for m in context.messages
+            f"{'[Voice] ' if m.isVoice else ''}{m.role}: {m.content}"
+            for m in context.messages
         )
 
         existing = context.current_diagram or "No existing diagram - create a new one."
