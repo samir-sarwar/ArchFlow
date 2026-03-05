@@ -175,17 +175,42 @@ def _handle_restore_session(body, connection_id, session_id):
         })}
 
     loop = asyncio.new_event_loop()
+    session_created_fresh = False
+    loop_closed = False
     try:
         context = loop.run_until_complete(
             state_manager.get_session(session_id)
         )
-    except (SessionNotFoundError, SessionExpiredError):
+    except SessionNotFoundError:
+        # No existing data — safe to create a blank session
+        try:
+            loop.run_until_complete(state_manager.create_session(session_id=session_id))
+        except Exception:
+            pass
+        session_created_fresh = True
+    except SessionExpiredError:
+        # Data exists but is stale — do NOT overwrite it
+        loop.close()
+        loop_closed = True
         return {"statusCode": 200, "body": json.dumps({
             "type": "session_expired",
-            "payload": {"message": "Session not found or expired."},
+            "payload": {"message": "Session expired. Starting a new session."},
         })}
     finally:
-        loop.close()
+        if not loop_closed:
+            loop.close()
+
+    if session_created_fresh:
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "session_restored",
+            "sessionId": session_id,
+            "payload": {
+                "messages": [],
+                "currentDiagram": None,
+                "diagramVersions": [],
+                "uploadedFiles": [],
+            },
+        })}
 
     return {"statusCode": 200, "body": json.dumps({
         "type": "session_restored",
