@@ -37,6 +37,11 @@ When suggesting architectures:
 - Highlight risks and mitigation: "SPOF here - mitigate with multi-AZ deployment"
 
 When generating diagrams, output valid Mermaid.js syntax wrapped in ```mermaid blocks.
+
+Conversation history note:
+- Messages prefixed with [Voice] came from a separate voice AI session.
+  Treat them as part of the same conversation — the user spoke those messages aloud.
+- Messages without a prefix were typed in text chat.
 """
 
 
@@ -54,17 +59,25 @@ class ArchitectureAdvisor:
             extra={"session_id": context.session_id},
         )
 
-        conversation = "\n".join(
+        recent_messages = context.messages[-15:]
+        conversation_lines = [
             f"{'[Voice] ' if m.isVoice else ''}{m.role}: {m.content}"
-            for m in context.messages
-        )
+            for m in recent_messages
+        ]
+        conversation = "\n".join(conversation_lines)
+        if len(conversation) > 12_000:
+            conversation = conversation[-12_000:]
+
+        diagram_context = context.current_diagram or "No diagram yet."
+        if len(diagram_context) > 3_000:
+            diagram_context = diagram_context[:3_000] + "\n... (diagram truncated)"
 
         prompt = f"""Given this conversation about a software architecture:
 
 {conversation}
 
 Current diagram (if any):
-{context.current_diagram or "No diagram yet."}
+{diagram_context}
 
 Provide architecture advice. If appropriate, include a Mermaid.js diagram wrapped in ```mermaid blocks."""
 

@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import os
+import time
 import uuid
 
 import boto3
@@ -42,8 +43,21 @@ class BedrockClient:
         if system_prompt:
             kwargs["system"] = [{"text": system_prompt}]
 
-        response = self.client.converse(**kwargs)
-        return response["output"]["message"]["content"][0]["text"]
+        last_exc = None
+        for attempt in range(2):
+            try:
+                response = self.client.converse(**kwargs)
+                return response["output"]["message"]["content"][0]["text"]
+            except self.client.exceptions.ThrottlingException as e:
+                logger.warning("Bedrock throttled (attempt %d): %s", attempt + 1, e)
+                last_exc = e
+                if attempt == 0:
+                    time.sleep(2)
+            except Exception as e:
+                logger.error("Bedrock converse error (model=%s): %s", model, e, exc_info=True)
+                raise
+
+        raise last_exc
 
     async def invoke_lite(self, prompt: str, system_prompt: str = "") -> str:
         """Invoke Nova Lite 2 for quick tasks."""

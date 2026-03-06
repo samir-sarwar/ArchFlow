@@ -41,10 +41,14 @@ class DiagramGenerator:
             extra={"session_id": context.session_id},
         )
 
-        conversation = "\n".join(
+        recent_messages = context.messages[-15:]
+        conversation_lines = [
             f"{'[Voice] ' if m.isVoice else ''}{m.role}: {m.content}"
-            for m in context.messages
-        )
+            for m in recent_messages
+        ]
+        conversation = "\n".join(conversation_lines)
+        if len(conversation) > 12_000:
+            conversation = conversation[-12_000:]
 
         existing = context.current_diagram or "No existing diagram - create a new one."
 
