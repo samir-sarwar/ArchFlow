@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/uiStore';
 export function VoiceInterface() {
   const [input, setInput] = useState('');
   const [showUpload, setShowUpload] = useState(false);
+  const [viewMode, setViewMode] = useState<'chat' | 'transcript'>('chat');
   const { sendMessage, sendWsMessage, stopAudioPlayback, isConnected } = useConversation();
   const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
   const isLoading = useUIStore((s) => s.isLoading);
@@ -26,7 +27,25 @@ export function VoiceInterface() {
 
   return (
     <>
-      <ConversationDisplay onStopAudio={stopAudioPlayback} />
+      <div className="flex justify-center pt-4 border-b border-gray-100 bg-white z-10 sticky top-0">
+        <div className="bg-gray-100 p-1 flex rounded-lg">
+          <button
+            onClick={() => setViewMode('chat')}
+            className={`px-4 py-1.5 text-sm rounded-md transition-colors ${viewMode === 'chat' ? 'bg-white shadow-sm font-medium text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+          >
+            Chat
+          </button>
+          <button
+            onClick={() => setViewMode('transcript')}
+            className={`px-4 py-1.5 text-sm rounded-md transition-colors ${viewMode === 'transcript' ? 'bg-white shadow-sm font-medium text-gray-900' : 'text-gray-500 hover:text-gray-700'
+              }`}
+          >
+            Transcript
+          </button>
+        </div>
+      </div>
+      <ConversationDisplay onStopAudio={stopAudioPlayback} viewMode={viewMode} />
 
       {/* File upload section */}
       <div className="px-4 py-2 border-t border-gray-100">
