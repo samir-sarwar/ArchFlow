@@ -27,6 +27,7 @@ interface ConversationStore {
   setWsSend: (fn: (msg: unknown) => void) => void;
   setIsConnected: (connected: boolean) => void;
   restoreSession: (data: { messages: Message[]; sessionId: string }) => void;
+  resetSession: () => void;
 }
 
 export const useConversationStore = create<ConversationStore>((set) => ({
@@ -42,6 +43,11 @@ export const useConversationStore = create<ConversationStore>((set) => ({
   setSessionId: (id) => {
     localStorage.setItem('archflow_sessionId', id);
     set({ sessionId: id });
+  },
+
+  resetSession: () => {
+    localStorage.removeItem('archflow_sessionId');
+    set({ sessionId: null, messages: [], currentTranscript: '', voiceStatus: null });
   },
 
   addMessage: (message) =>

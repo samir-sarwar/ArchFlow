@@ -21,7 +21,7 @@ export function useConversation() {
   const chunkPlayerRef = useRef<AudioChunkPlayer | null>(null);
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
   // Ref to hold handleIncomingMessage so the voice WS callback always uses the latest version
-  const handleIncomingRef = useRef<(data: Record<string, unknown>) => void>(() => {});
+  const handleIncomingRef = useRef<(data: Record<string, unknown>) => void>(() => { });
 
   // ── Two separate WebSocket connections ──
   const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL);
@@ -114,6 +114,7 @@ export function useConversation() {
           content: payload.text,
           timestamp: new Date().toISOString(),
           agent: payload.agent,
+          isVoice: !!payload.hasAudio || !!payload.transcription,
         };
         conversationStore.addMessage(assistantMsg);
 
@@ -284,17 +285,33 @@ export function useConversation() {
     promptNameRef.current = promptName;
     audioContentNameRef.current = audioContentName;
 
+    let currentSessionId = conversationStore.sessionId;
+    if (!currentSessionId) {
+      currentSessionId = crypto.randomUUID();
+      conversationStore.setSessionId(currentSessionId);
+      // Notify text backend to create this session if it doesn't exist
+      wsSend({ action: 'restore_session', sessionId: currentSessionId });
+    }
+
 
     const userMsg: Message = {
       role: 'user',
       content: '[Listening...]',
       timestamp: new Date().toISOString(),
+      isVoice: true,
     };
     conversationStore.addMessage(userMsg);
     setError(null);
 
     // 1. Session start
-    voiceWsSend({ event: { sessionStart: { inferenceConfiguration: { maxTokens: 1024, topP: 0.95, temperature: 0.7 } } } });
+    voiceWsSend({
+      event: {
+        sessionStart: {
+          sessionId: currentSessionId,
+          inferenceConfiguration: { maxTokens: 1024, topP: 0.95, temperature: 0.7 }
+        }
+      }
+    });
 
     // 2. Prompt start — text + audio output.
     // AudioOutputConfiguration is REQUIRED by Nova Sonic\u2019s API.
@@ -381,7 +398,7 @@ export function useConversation() {
         },
       },
     });
-  }, [voiceWsSend, conversationStore, setError]);
+  }, [voiceWsSend, conversationStore, setError, wsSend]);
 
   /** Send a single PCM audio chunk (base64) to the voice server. */
   const sendAudioChunk = useCallback(
