@@ -3,6 +3,7 @@ export interface Message {
   content: string;
   timestamp: string;
   agent?: string;
+  isVoice?: boolean;
 }
 
 export interface ConversationSession {
