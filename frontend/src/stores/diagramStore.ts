@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { DiagramVersion, EditorMode } from '@/types/diagram';
+import type { DiagramVersion } from '@/types/diagram';
 
 const MAX_HISTORY = 10;
 
@@ -8,13 +8,11 @@ interface DiagramStore {
   renderedSvg: string;
   history: DiagramVersion[];
   historyIndex: number;
-  mode: EditorMode;
 
   updateDiagram: (syntax: string, description?: string) => void;
   restoreDiagram: (syntax: string, versions: DiagramVersion[]) => void;
   undo: () => void;
   redo: () => void;
-  switchMode: (mode: EditorMode) => void;
   clearDiagram: () => void;
   setRenderedSvg: (svg: string) => void;
 }
@@ -24,7 +22,6 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
   renderedSvg: '',
   history: [],
   historyIndex: -1,
-  mode: 'voice',
 
   updateDiagram: (syntax, description) =>
     set((state) => {
@@ -73,8 +70,6 @@ export const useDiagramStore = create<DiagramStore>((set, get) => ({
       });
     }
   },
-
-  switchMode: (mode) => set({ mode }),
 
   clearDiagram: () =>
     set({ currentSyntax: '', renderedSvg: '', history: [], historyIndex: -1 }),

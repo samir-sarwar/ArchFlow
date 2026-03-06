@@ -1,13 +1,11 @@
 import { VoiceInterface } from '@/components/VoiceInterface';
 import { DiagramCanvas } from '@/components/DiagramCanvas';
-import { useDiagramSync } from '@/hooks/useDiagramSync';
 import { useUIStore } from '@/stores/uiStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { Toast } from '@/components/shared/Toast';
 import { RotateCcw } from 'lucide-react';
 
 export default function App() {
-  useDiagramSync();
 
   const notifications = useUIStore((s) => s.notifications);
   const removeNotification = useUIStore((s) => s.removeNotification);
