@@ -79,6 +79,80 @@ class BedrockClient:
             prompt, system_prompt, model_id=self.model_lite, max_tokens=2048
         )
 
+    async def invoke_lite_thinking(
+        self,
+        prompt: str,
+        system_prompt: str = "",
+        max_tokens: int = 4096,
+        reasoning_effort: str = "medium",
+    ) -> str:
+        """Invoke Nova 2 Lite with thinking/reasoning mode enabled.
+
+        reasoning_effort: "low", "medium", or "high".
+        Note: "high" forbids temperature/topP/topK parameters.
+        """
+        model = self.model_lite
+        logger.info(
+            "Invoking Bedrock model with thinking",
+            extra={"model_id": model, "reasoning_effort": reasoning_effort},
+        )
+
+        kwargs = {
+            "modelId": model,
+            "messages": [{"role": "user", "content": [{"text": prompt}]}],
+            "inferenceConfig": {"maxTokens": max_tokens},
+            "additionalModelRequestFields": {
+                "reasoningConfig": {
+                    "type": "enabled",
+                    "maxReasoningEffort": reasoning_effort,
+                }
+            },
+        }
+
+        # temperature/topP cannot be used with "high" effort
+        if reasoning_effort != "high":
+            kwargs["inferenceConfig"]["topP"] = 0.9
+            kwargs["inferenceConfig"]["temperature"] = 0.7
+
+        if system_prompt:
+            kwargs["system"] = [{"text": system_prompt}]
+
+        last_exc = None
+        retryable_error_codes = {"ThrottlingException", "ModelNotReadyException", "ServiceUnavailableException"}
+
+        for attempt in range(2):
+            try:
+                response = self.client.converse(**kwargs)
+                # Thinking mode returns reasoningContent + text blocks; extract final text
+                content_blocks = response["output"]["message"]["content"]
+                for block in content_blocks:
+                    if "text" in block:
+                        return block["text"]
+                return ""
+            except Exception as e:
+                error_code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+                is_retryable = error_code in retryable_error_codes or isinstance(
+                    e, self.client.exceptions.ThrottlingException
+                )
+
+                if is_retryable:
+                    logger.warning(
+                        "Bedrock retryable error (attempt %d, model=%s, code=%s): %s",
+                        attempt + 1, model, error_code, e,
+                    )
+                    last_exc = e
+                    if attempt == 0:
+                        await asyncio.sleep(2)
+                    continue
+
+                logger.error(
+                    "Bedrock converse error (model=%s, code=%s): %s",
+                    model, error_code, e, exc_info=True,
+                )
+                raise
+
+        raise last_exc
+
     async def invoke_pro(self, prompt: str, system_prompt: str = "") -> str:
         """Invoke Nova 2 Lite with higher token limit for complex reasoning.
 

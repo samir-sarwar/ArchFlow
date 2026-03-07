@@ -12,7 +12,8 @@ You will be given recent conversation history followed by a new user message to 
 Classify the new user message as exactly one of:
 - "architecture_advice" - User wants NEW design guidance, best practices, or trade-off analysis \
 not already covered. Do NOT use this for recall questions about prior decisions.
-- "modify_diagram" - User wants to create, update, or change a diagram
+- "modify_diagram" - User wants to create, update, change, or generate a diagram (includes \
+requests like "show me", "draw", "diagram", "visualize", "add X to the diagram")
 - "clarification_needed" - User's request is too vague to act on and needs more information
 - "analyze_context" - User is providing or referencing uploaded documents or files
 - "general" - Greetings, casual chat, OR questions asking about something already established \
@@ -21,6 +22,18 @@ the stack we picked"). Use this when the answer is already in the conversation h
 
 IMPORTANT: If the user's question can be answered from the recent conversation above \
 (it is recalling or confirming something already discussed), classify as "general".
+
+Examples:
+- "Can you create a diagram showing the microservices?" → "modify_diagram"
+- "Show me what this architecture looks like" → "modify_diagram"
+- "Add a load balancer to the diagram" → "modify_diagram"
+- "What are the trade-offs between SQL and NoSQL for this?" → "architecture_advice"
+- "How should I handle authentication?" → "architecture_advice"
+- "Hi there!" → "general"
+- "What did we decide about the database?" → "general"
+- "Thanks, that makes sense" → "general"
+- "I uploaded a requirements doc" → "analyze_context"
+- "I want to build a REST API" → "clarification_needed"
 
 Respond with ONLY the intent string, nothing else."""
 
@@ -48,17 +61,19 @@ class OrchestratorAgent:
         self, message: str, context: ConversationContext
     ) -> IntentType:
         """Analyze user intent using Nova Lite to determine routing."""
-        recent = [m for m in context.messages[-4:] if m.role in ("user", "assistant")]
+        recent = [m for m in context.messages[-6:] if m.role in ("user", "assistant")]
         history_lines = [
-            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content[:150]}"
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content[:200]}"
             for m in recent
         ]
         history_str = "\n".join(history_lines) if history_lines else "(no prior conversation)"
         prompt = f"Recent conversation:\n{history_str}\n\nNew user message to classify: {message}"
 
-        response = await self.bedrock.invoke_lite(
+        response = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=INTENT_CLASSIFICATION_PROMPT,
+            max_tokens=256,
+            reasoning_effort="low",
         )
 
         intent_str = response.strip().lower().strip('"')
