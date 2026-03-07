@@ -81,7 +81,7 @@ Current diagram (if any):
 
 Provide architecture advice. If appropriate, include a Mermaid.js diagram wrapped in ```mermaid blocks."""
 
-        response_text = await self.bedrock.invoke_pro(
+        response_text = await self.bedrock.invoke_lite(
             prompt=prompt,
             system_prompt=self.system_prompt,
         )

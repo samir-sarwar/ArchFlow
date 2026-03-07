@@ -2,7 +2,6 @@ import asyncio
 import base64
 import json
 import os
-import time
 import uuid
 
 import boto3
@@ -18,7 +17,7 @@ class BedrockClient:
         self.client = boto3.client("bedrock-runtime", region_name=self.region)
 
         # Nova 2 model IDs with the us. inference profile prefix (required for cross-region inference)
-        self.model_pro = os.environ.get("BEDROCK_MODEL_PRO", "us.amazon.nova-2-pro-v1:0")
+        # Note: Nova 2 only has Lite (text) and Sonic (speech) — there is no Pro tier.
         self.model_lite = os.environ.get("BEDROCK_MODEL_LITE", "us.amazon.nova-2-lite-v1:0")
         self.model_sonic = os.environ.get("BEDROCK_MODEL_SONIC", "us.amazon.nova-2-sonic-v1:0")
 
@@ -30,7 +29,7 @@ class BedrockClient:
         max_tokens: int = 4096,
     ) -> str:
         """Invoke a Bedrock model via the Converse API and return the response text."""
-        model = model_id or self.model_pro
+        model = model_id or self.model_lite
 
         logger.info("Invoking Bedrock model", extra={"model_id": model})
 
@@ -44,17 +43,32 @@ class BedrockClient:
             kwargs["system"] = [{"text": system_prompt}]
 
         last_exc = None
+        retryable_error_codes = {"ThrottlingException", "ModelNotReadyException", "ServiceUnavailableException"}
+
         for attempt in range(2):
             try:
                 response = self.client.converse(**kwargs)
                 return response["output"]["message"]["content"][0]["text"]
-            except self.client.exceptions.ThrottlingException as e:
-                logger.warning("Bedrock throttled (attempt %d): %s", attempt + 1, e)
-                last_exc = e
-                if attempt == 0:
-                    time.sleep(2)
             except Exception as e:
-                logger.error("Bedrock converse error (model=%s): %s", model, e, exc_info=True)
+                error_code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
+                is_retryable = error_code in retryable_error_codes or isinstance(
+                    e, self.client.exceptions.ThrottlingException
+                )
+
+                if is_retryable:
+                    logger.warning(
+                        "Bedrock retryable error (attempt %d, model=%s, code=%s): %s",
+                        attempt + 1, model, error_code, e,
+                    )
+                    last_exc = e
+                    if attempt == 0:
+                        await asyncio.sleep(2)
+                    continue
+
+                logger.error(
+                    "Bedrock converse error (model=%s, code=%s): %s",
+                    model, error_code, e, exc_info=True,
+                )
                 raise
 
         raise last_exc
@@ -66,9 +80,12 @@ class BedrockClient:
         )
 
     async def invoke_pro(self, prompt: str, system_prompt: str = "") -> str:
-        """Invoke Nova Pro 2 for complex reasoning."""
+        """Invoke Nova 2 Lite with higher token limit for complex reasoning.
+
+        Note: Nova 2 has no Pro tier. This method uses Lite with max_tokens=4096.
+        """
         return await self.invoke_model(
-            prompt, system_prompt, model_id=self.model_pro, max_tokens=4096
+            prompt, system_prompt, model_id=self.model_lite, max_tokens=4096
         )
 
     async def invoke_with_image(
@@ -80,7 +97,7 @@ class BedrockClient:
         max_tokens: int = 4096,
     ) -> str:
         """Invoke Nova Pro 2 with an image for vision analysis."""
-        logger.info("Invoking Bedrock with image", extra={"model_id": self.model_pro})
+        logger.info("Invoking Bedrock with image", extra={"model_id": self.model_lite})
 
         fmt = media_type.split("/")[-1]
         if fmt == "jpg":
@@ -90,7 +107,7 @@ class BedrockClient:
         image_bytes = base64.b64decode(image_b64) if isinstance(image_b64, str) else image_b64
 
         kwargs = {
-            "modelId": self.model_pro,
+            "modelId": self.model_lite,
             "messages": [
                 {
                     "role": "user",
@@ -117,7 +134,7 @@ class BedrockClient:
     ):
         """Invoke Nova Pro 2 with streaming — yields text chunks as they arrive."""
         kwargs = {
-            "modelId": self.model_pro,
+            "modelId": self.model_lite,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
             "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
         }

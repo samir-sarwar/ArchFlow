@@ -126,7 +126,7 @@ class ContextAnalyzer:
             f"Analyze this document for architectural context:\n\n{extracted_text}"
         )
 
-        response = await self.bedrock.invoke_pro(
+        response = await self.bedrock.invoke_lite(
             prompt=prompt,
             system_prompt=CONTEXT_ANALYSIS_PROMPT,
         )

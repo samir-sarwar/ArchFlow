@@ -7,19 +7,28 @@ from src.utils import logger
 
 INTENT_CLASSIFICATION_PROMPT = """You are an intent classifier for an architecture diagramming tool.
 
-Given a user message, classify the intent as exactly one of:
-- "architecture_advice" - User wants design guidance, best practices, or trade-off analysis
+You will be given recent conversation history followed by a new user message to classify.
+
+Classify the new user message as exactly one of:
+- "architecture_advice" - User wants NEW design guidance, best practices, or trade-off analysis \
+not already covered. Do NOT use this for recall questions about prior decisions.
 - "modify_diagram" - User wants to create, update, or change a diagram
 - "clarification_needed" - User's request is too vague to act on and needs more information
 - "analyze_context" - User is providing or referencing uploaded documents or files
-- "general" - General conversation, greetings, or off-topic
+- "general" - Greetings, casual chat, OR questions asking about something already established \
+in the conversation (e.g. "what did we decide?", "what port did we choose?", "remind me of \
+the stack we picked"). Use this when the answer is already in the conversation history.
+
+IMPORTANT: If the user's question can be answered from the recent conversation above \
+(it is recalling or confirming something already discussed), classify as "general".
 
 Respond with ONLY the intent string, nothing else."""
 
 GENERAL_CONVERSATION_PROMPT = """You are ArchFlow, a friendly AI software architecture assistant.
-The user is not asking about software architecture right now — they are making casual conversation.
-Respond naturally and briefly, as you would in normal conversation.
-Do not mention AWS, architecture, diagrams, or system design unless the user brings it up first."""
+The user is not requesting new architecture analysis right now.
+Respond naturally and concisely.
+If the user is asking about something previously discussed in the conversation,
+answer it directly and briefly from the conversation history."""
 
 
 class OrchestratorAgent:
@@ -39,7 +48,13 @@ class OrchestratorAgent:
         self, message: str, context: ConversationContext
     ) -> IntentType:
         """Analyze user intent using Nova Lite to determine routing."""
-        prompt = f"User message: {message}"
+        recent = [m for m in context.messages[-4:] if m.role in ("user", "assistant")]
+        history_lines = [
+            f"{'User' if m.role == 'user' else 'Assistant'}: {m.content[:150]}"
+            for m in recent
+        ]
+        history_str = "\n".join(history_lines) if history_lines else "(no prior conversation)"
+        prompt = f"Recent conversation:\n{history_str}\n\nNew user message to classify: {message}"
 
         response = await self.bedrock.invoke_lite(
             prompt=prompt,
@@ -47,6 +62,7 @@ class OrchestratorAgent:
         )
 
         intent_str = response.strip().lower().strip('"')
+        logger.info("Intent classification raw response: %r -> %r", response.strip(), intent_str)
 
         intent_map = {
             "architecture_advice": IntentType.ARCHITECTURE_ADVICE,
@@ -95,21 +111,32 @@ class OrchestratorAgent:
             logger.error("Intent classification failed, defaulting to advisor", exc_info=True)
             intent = IntentType.ARCHITECTURE_ADVICE
 
+        agent_name = "unknown"
         try:
             if intent == IntentType.CLARIFICATION_NEEDED:
+                agent_name = "requirements"
                 return await self.agents["requirements"].process(context)
             elif intent == IntentType.ARCHITECTURE_ADVICE:
+                agent_name = "advisor"
                 return await self.agents["advisor"].process(context)
             elif intent == IntentType.MODIFY_DIAGRAM:
+                agent_name = "generator"
                 return await self.agents["generator"].process(context)
             elif intent == IntentType.ANALYZE_CONTEXT:
+                agent_name = "context"
                 return await self.agents["context"].process(context)
             elif intent == IntentType.GENERAL:
+                agent_name = "general"
                 return await self._handle_general(message, context)
             else:
+                agent_name = "advisor(fallback)"
                 return await self.agents["advisor"].process(context)
-        except Exception:
-            logger.error("Agent processing failed", exc_info=True)
+        except Exception as e:
+            logger.error(
+                "Agent processing failed: agent=%s, intent=%s, error_type=%s, error=%s",
+                agent_name, intent.value, type(e).__name__, str(e),
+                exc_info=True,
+            )
             return AgentResponse(
                 text="I'm sorry, I encountered an error processing your request. Please try again.",
                 agent_used="orchestrator",

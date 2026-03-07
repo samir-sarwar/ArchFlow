@@ -22,7 +22,6 @@ Globals:
         CONVERSATION_TABLE_NAME: !Ref ConversationsTable
         UPLOADS_BUCKET: !Ref UploadsBucket
         EXPORTS_BUCKET: !Ref ExportsBucket
-        BEDROCK_MODEL_PRO: us.amazon.nova-2-pro-v1:0
         BEDROCK_MODEL_LITE: us.amazon.nova-2-lite-v1:0
         BEDROCK_MODEL_SONIC: us.amazon.nova-2-sonic-v1:0
         LOG_LEVEL: INFO
