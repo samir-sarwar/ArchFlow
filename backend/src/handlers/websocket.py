@@ -234,7 +234,10 @@ async def _process_message(
         session_id = await state_manager.create_session()
         context = await state_manager.get_session(session_id)
 
-    if current_diagram:
+    # Only use the frontend's diagram if the backend has none (fresh session).
+    # Otherwise trust DynamoDB state — it may contain a voice AI diagram that
+    # the frontend hasn't fully synced yet.
+    if current_diagram and not context.current_diagram:
         context.current_diagram = current_diagram
 
     user_msg = Message(role="user", content=text)

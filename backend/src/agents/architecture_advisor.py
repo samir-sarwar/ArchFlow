@@ -14,7 +14,7 @@ Your approach:
 3. Reference the AWS Well-Architected Framework pillars when relevant
 
 Response format rules (CRITICAL — you are a chatbot, not writing a whitepaper):
-- Keep responses under 150 words
+- Keep responses under 250 words
 - Use short paragraphs (2-3 sentences max)
 - Use bullet points for lists, not long explanations
 - If the user asks a simple question, give a simple answer
@@ -70,7 +70,7 @@ Provide architecture advice. If appropriate, include a Mermaid.js diagram wrappe
         response_text = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=self.system_prompt,
-            max_tokens=1024,
+            max_tokens=2048,
             reasoning_effort="medium",
         )
 
