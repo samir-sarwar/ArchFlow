@@ -19,6 +19,7 @@ html.dark body {
 }
 
 @layer components {
+
   /* Light mode glass */
   .glass {
     backdrop-filter: blur(20px) saturate(180%);
@@ -96,11 +97,12 @@ html.dark body {
 
 /* Mermaid diagram SVG sizing */
 .diagram-container {
-  line-height: 0; /* prevent extra space below inline SVG */
+  /* line-height handled by svg { display: block } below */
 }
 
 .diagram-container svg {
-  max-width: none !important; /* override Tailwind preflight max-width: 100% */
+  max-width: none !important;
+  /* override Tailwind preflight max-width: 100% */
   height: auto;
   display: block;
 }
