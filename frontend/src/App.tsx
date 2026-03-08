@@ -38,16 +38,12 @@ export default function App() {
         <DiagramCanvas />
       </div>
 
-      {/* Drag-and-drop zone (invisible, covers canvas) */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="pointer-events-auto h-full w-full">
-          <Dropzone
-            onFilesSelected={handleFilesSelected}
-            disabled={!isConnected}
-            overlay
-          />
-        </div>
-      </div>
+      {/* Drag-and-drop zone (invisible until file drag) */}
+      <Dropzone
+        onFilesSelected={handleFilesSelected}
+        disabled={!isConnected}
+        overlay
+      />
 
       {/* Sidebar */}
       <Sidebar />

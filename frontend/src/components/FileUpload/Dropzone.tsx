@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { useDropzone } from 'react-dropzone';
 
 interface DropzoneProps {
@@ -16,7 +16,54 @@ const ACCEPTED_TYPES = {
 
 const MAX_SIZE = 10 * 1024 * 1024; // 10MB
 
+/**
+ * Detects when files are being dragged over the document (from the OS).
+ * Returns true while an external drag is in progress so we can enable
+ * pointer-events on the dropzone overlay only when needed.
+ */
+function useDocumentDrag() {
+  const [isDraggingOverDocument, setIsDraggingOverDocument] = useState(false);
+  const counterRef = useRef(0);
+
+  useEffect(() => {
+    const onDragEnter = (e: DragEvent) => {
+      // Only react to file drags, not in-page drags
+      if (e.dataTransfer?.types?.includes('Files')) {
+        counterRef.current++;
+        if (counterRef.current === 1) setIsDraggingOverDocument(true);
+      }
+    };
+    const onDragLeave = () => {
+      counterRef.current = Math.max(0, counterRef.current - 1);
+      if (counterRef.current === 0) setIsDraggingOverDocument(false);
+    };
+    const onDrop = () => {
+      counterRef.current = 0;
+      setIsDraggingOverDocument(false);
+    };
+    const onDragEnd = () => {
+      counterRef.current = 0;
+      setIsDraggingOverDocument(false);
+    };
+
+    document.addEventListener('dragenter', onDragEnter);
+    document.addEventListener('dragleave', onDragLeave);
+    document.addEventListener('drop', onDrop);
+    document.addEventListener('dragend', onDragEnd);
+    return () => {
+      document.removeEventListener('dragenter', onDragEnter);
+      document.removeEventListener('dragleave', onDragLeave);
+      document.removeEventListener('drop', onDrop);
+      document.removeEventListener('dragend', onDragEnd);
+    };
+  }, []);
+
+  return isDraggingOverDocument;
+}
+
 export function Dropzone({ onFilesSelected, disabled, overlay }: DropzoneProps) {
+  const isDraggingOverDocument = useDocumentDrag();
+
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0) {
@@ -38,12 +85,19 @@ export function Dropzone({ onFilesSelected, disabled, overlay }: DropzoneProps) 
     });
 
   if (overlay) {
+    // The overlay is pointer-events-none by default so all mouse / touch
+    // events pass through to the diagram canvas (zoom, pan, pinch).
+    // When an external file drag is detected at the document level we
+    // flip to pointer-events-auto so react-dropzone can handle the drop.
+    const active = isDraggingOverDocument || isDragActive;
+
     return (
       <div
         {...getRootProps()}
-        className={`w-full h-full transition-colors ${
-          isDragActive ? 'bg-primary-100/50 dark:bg-primary-600/10' : ''
-        }`}
+        className={`fixed inset-0 z-30 transition-colors ${active
+            ? 'pointer-events-auto bg-primary-100/50 dark:bg-primary-600/10'
+            : 'pointer-events-none'
+          }`}
       >
         <input {...getInputProps()} />
         {isDragActive && (
@@ -66,11 +120,10 @@ export function Dropzone({ onFilesSelected, disabled, overlay }: DropzoneProps) 
     <div>
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
-          isDragActive
+        className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${isDragActive
             ? 'border-primary-400 bg-primary-50 dark:bg-primary-600/10'
             : 'border-gray-300 hover:border-primary-300 dark:border-white/10 dark:hover:border-primary-400/50'
-        } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         <input {...getInputProps()} />
         {isDragActive ? (

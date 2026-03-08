@@ -93,3 +93,14 @@ html.dark body {
 .dark ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
+
+/* Mermaid diagram SVG sizing */
+.diagram-container {
+  line-height: 0; /* prevent extra space below inline SVG */
+}
+
+.diagram-container svg {
+  max-width: none !important; /* override Tailwind preflight max-width: 100% */
+  height: auto;
+  display: block;
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from 'react-zoom-pan-pinch';
+import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef, useControls } from 'react-zoom-pan-pinch';
 import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -22,6 +22,7 @@ export function MermaidRenderer({
   const [isRendering, setIsRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
   const setRenderedSvg = useDiagramStore((s) => s.setRenderedSvg);
   const theme = useUIStore((s) => s.theme);
@@ -69,18 +70,45 @@ export function MermaidRenderer({
   }, [syntax, theme, onRenderComplete, onError, setRenderedSvg]);
 
   const fitToView = useCallback(() => {
-    if (transformRef.current) {
+    if (!transformRef.current || !wrapperRef.current) return;
+
+    const wrapperEl = wrapperRef.current;
+    const svgEl = wrapperEl.querySelector('svg');
+    if (!svgEl) {
       transformRef.current.centerView(1, 0);
+      return;
     }
+
+    // Get the SVG's intrinsic dimensions from viewBox or attributes
+    const viewBox = svgEl.viewBox?.baseVal;
+    const svgW = viewBox?.width || svgEl.getBBox().width || svgEl.clientWidth;
+    const svgH = viewBox?.height || svgEl.getBBox().height || svgEl.clientHeight;
+
+    const wrapperW = wrapperEl.clientWidth;
+    const wrapperH = wrapperEl.clientHeight;
+
+    if (svgW === 0 || svgH === 0 || wrapperW === 0 || wrapperH === 0) {
+      transformRef.current.centerView(1, 0);
+      return;
+    }
+
+    // Fit with 90% margin so diagram doesn't touch edges
+    const scale = Math.min(wrapperW / svgW, wrapperH / svgH) * 0.9;
+    const clampedScale = Math.max(0.1, Math.min(scale, 5));
+
+    transformRef.current.centerView(clampedScale, 0);
   }, []);
 
   useEffect(() => {
     renderDiagram();
   }, [renderDiagram]);
 
-  // Re-fit diagram when SVG content changes
+  // Re-fit diagram when SVG content changes (small delay for DOM paint)
   useEffect(() => {
-    if (svg) fitToView();
+    if (svg) {
+      const timer = requestAnimationFrame(() => fitToView());
+      return () => cancelAnimationFrame(timer);
+    }
   }, [svg, fitToView]);
 
   if (isRendering) return <LoadingSpinner />;
@@ -113,26 +141,73 @@ export function MermaidRenderer({
   }
 
   return (
-    <TransformWrapper
-      ref={transformRef}
-      initialScale={1}
-      minScale={0.1}
-      maxScale={5}
-      centerOnInit={true}
-      onInit={fitToView}
-      wheel={{ step: 0.1 }}
-      doubleClick={{ mode: 'reset' }}
-    >
-      <TransformComponent
-        wrapperStyle={{ width: '100%', height: '100%' }}
-        contentStyle={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+    <div ref={wrapperRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+      <TransformWrapper
+        ref={transformRef}
+        initialScale={1}
+        minScale={0.1}
+        maxScale={5}
+        centerOnInit={false}
+        onInit={fitToView}
+        limitToBounds={false}
+        wheel={{ step: 0.05, smoothStep: 0.01 }}
+        pinch={{ step: 5 }}
+        panning={{ velocityDisabled: false }}
+        doubleClick={{ mode: 'reset' }}
       >
-        <div
-          ref={containerRef}
-          className="diagram-container p-8"
-          dangerouslySetInnerHTML={{ __html: svg }}
-        />
-      </TransformComponent>
-    </TransformWrapper>
+        <ZoomControls onFitToView={fitToView} />
+        <TransformComponent
+          wrapperStyle={{
+            width: '100%',
+            height: '100%',
+            overflow: 'hidden',
+          }}
+          contentStyle={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            ref={containerRef}
+            className="diagram-container"
+            dangerouslySetInnerHTML={{ __html: svg }}
+          />
+        </TransformComponent>
+      </TransformWrapper>
+    </div>
+  );
+}
+
+/* ---------- Zoom Control Buttons ---------- */
+function ZoomControls({ onFitToView }: { onFitToView: () => void }) {
+  const { zoomIn, zoomOut, resetTransform } = useControls();
+
+  return (
+    <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1">
+      <button
+        onClick={() => zoomIn(0.3)}
+        className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-lg font-medium"
+        title="Zoom in"
+      >
+        +
+      </button>
+      <button
+        onClick={() => zoomOut(0.3)}
+        className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-lg font-medium"
+        title="Zoom out"
+      >
+        −
+      </button>
+      <button
+        onClick={() => { resetTransform(); setTimeout(onFitToView, 50); }}
+        className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+        title="Fit to view"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+          <path fillRule="evenodd" d="M4.25 2A2.25 2.25 0 0 0 2 4.25v2.5a.75.75 0 0 0 1.5 0v-2.5a.75.75 0 0 1 .75-.75h2.5a.75.75 0 0 0 0-1.5h-2.5ZM13.25 2a.75.75 0 0 0 0 1.5h2.5a.75.75 0 0 1 .75.75v2.5a.75.75 0 0 0 1.5 0v-2.5A2.25 2.25 0 0 0 15.75 2h-2.5ZM3.5 13.25a.75.75 0 0 0-1.5 0v2.5A2.25 2.25 0 0 0 4.25 18h2.5a.75.75 0 0 0 0-1.5h-2.5a.75.75 0 0 1-.75-.75v-2.5ZM18 13.25a.75.75 0 0 0-1.5 0v2.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 0 0 1.5h2.5A2.25 2.25 0 0 0 18 15.75v-2.5Z" clipRule="evenodd" />
+        </svg>
+      </button>
+    </div>
   );
 }
