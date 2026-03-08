@@ -1,43 +1,68 @@
-import { VoiceInterface } from '@/components/VoiceInterface';
+import { useEffect } from 'react';
 import { DiagramCanvas } from '@/components/DiagramCanvas';
+import { Sidebar } from '@/components/Sidebar';
+import { TopControls } from '@/components/TopControls';
+import { ChatOverlay } from '@/components/ChatOverlay';
+import { InputBar } from '@/components/InputBar';
+import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useUIStore } from '@/stores/uiStore';
-import { useConversationStore } from '@/stores/conversationStore';
 import { Toast } from '@/components/shared/Toast';
-import { RotateCcw } from 'lucide-react';
+import { Dropzone } from '@/components/FileUpload';
+import { useConversation } from '@/hooks/useConversation';
+import { useFileUpload } from '@/hooks/useFileUpload';
 
 export default function App() {
-
   const notifications = useUIStore((s) => s.notifications);
   const removeNotification = useUIStore((s) => s.removeNotification);
+  const theme = useUIStore((s) => s.theme);
+  const { sendWsMessage, isConnected } = useConversation();
+  const { uploadFile } = useFileUpload(sendWsMessage);
+
+  // Apply dark class to document root
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [theme]);
+
+  const handleFilesSelected = (files: File[]) => {
+    files.forEach(uploadFile);
+  };
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      {/* Left Panel - Conversation */}
-      <aside className="w-96 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
-        <header className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
-          <div>
-            <h1 className="text-lg font-semibold text-gray-900">ArchFlow</h1>
-            <p className="text-sm text-gray-500">Design systems by conversation</p>
-          </div>
-          <button
-            onClick={() => {
-              useConversationStore.getState().resetSession();
-              // Refresh the page to reload state and websockets freshly
-              window.location.reload();
-            }}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
-            title="Start New Chat"
-          >
-            <RotateCcw className="w-4 h-4" />
-          </button>
-        </header>
-        <VoiceInterface />
-      </aside>
-
-      {/* Right Panel - Diagram */}
-      <main className="flex-1 flex flex-col">
+    <div className="relative h-screen w-screen overflow-hidden bg-gray-50 dark:bg-surface-500">
+      {/* Full-screen diagram canvas */}
+      <div className="absolute inset-0">
         <DiagramCanvas />
-      </main>
+      </div>
+
+      {/* Drag-and-drop zone (invisible, covers canvas) */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="pointer-events-auto h-full w-full">
+          <Dropzone
+            onFilesSelected={handleFilesSelected}
+            disabled={!isConnected}
+            overlay
+          />
+        </div>
+      </div>
+
+      {/* Sidebar */}
+      <Sidebar />
+
+      {/* Top floating controls */}
+      <TopControls />
+
+      {/* Chat overlay */}
+      <ChatOverlay />
+
+      {/* Voice recording indicator */}
+      <VoiceIndicator />
+
+      {/* Input bar */}
+      <InputBar />
 
       {/* Toast Notifications */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
