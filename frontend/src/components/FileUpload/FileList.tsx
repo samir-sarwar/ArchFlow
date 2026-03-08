@@ -14,26 +14,24 @@ export function FileList({ files, onRemove }: FileListProps) {
   if (files.length === 0) return null;
 
   return (
-    <ul className="space-y-2 mt-3">
+    <div className="flex flex-wrap gap-2">
       {files.map((file) => (
-        <li
+        <div
           key={file.name}
-          className="flex items-center justify-between text-sm p-2 bg-gray-50 rounded"
+          className="flex items-center gap-2 text-xs px-2.5 py-1.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200 dark:bg-white/5 dark:text-white/60 dark:border-white/5"
         >
-          <span className="truncate">{file.name}</span>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{file.status}</span>
-            {onRemove && (
-              <button
-                onClick={() => onRemove(file.name)}
-                className="text-gray-400 hover:text-red-500"
-              >
-                &times;
-              </button>
-            )}
-          </div>
-        </li>
+          <span className="truncate max-w-[120px]">{file.name}</span>
+          <span className="text-gray-300 dark:text-white/25">{file.status}</span>
+          {onRemove && (
+            <button
+              onClick={() => onRemove(file.name)}
+              className="text-gray-300 hover:text-red-500 dark:text-white/30 dark:hover:text-red-400 transition-colors"
+            >
+              &times;
+            </button>
+          )}
+        </div>
       ))}
-    </ul>
+    </div>
   );
 }
