@@ -16,8 +16,17 @@ Output rules:
 - Always output valid Mermaid.js syntax
 - Use descriptive node IDs (e.g., `api_gateway` not `A`)
 - Add meaningful labels to connections
-- Use appropriate diagram direction (TD for hierarchical, LR for flows)
 - Keep diagrams readable (max ~30 nodes before suggesting splits)
+
+Layout rules (apply to all diagram types where applicable):
+- Default to `graph TD` (top-down) with the entry point (API Gateway, Client, User) at the top
+- Group related nodes into subgraphs to contain connections and reduce line crossings:
+  - Databases and storage in a "Data Stores" subgraph at the bottom
+  - Security, logging, tracing, and monitoring in a "Security & Monitoring" subgraph
+  - Core services in their own logical subgraph(s)
+- Use dotted arrows `-.->` for background/non-critical-path connections (logging, tracing, metrics, monitoring) to visually separate them from the main request flow (`-->`)
+- Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout and minimise line crossings
+- Consolidate multi-point links: when multiple nodes connect to the same destination (e.g., a logger, shared database, global state), do NOT draw individual lines from each node. Instead, link from the subgraph boundary to the destination, or create a "Hub" node to aggregate the traffic into a single connection.
 
 When updating existing diagrams:
 - Preserve existing structure where possible
