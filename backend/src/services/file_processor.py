@@ -1,23 +1,19 @@
+import io
 import os
-import time
 
 import boto3
+from pypdf import PdfReader
 
 from src.utils import logger
 
 UPLOADS_BUCKET = os.environ.get("UPLOADS_BUCKET", "archflow-uploads-dev")
 
-# Max time to wait for Textract async job (seconds)
-_TEXTRACT_POLL_TIMEOUT = 90
-_TEXTRACT_POLL_INTERVAL = 2
-
 
 class FileProcessor:
-    """Handles file uploads and processing via S3 and Textract."""
+    """Handles file uploads and processing via S3."""
 
     def __init__(self):
         self.s3 = boto3.client("s3")
-        self.textract = boto3.client("textract")
 
     def generate_presigned_upload_url(
         self, file_key: str, content_type: str, expires_in: int = 3600
@@ -34,78 +30,36 @@ class FileProcessor:
         )
 
     async def extract_text(self, file_key: str) -> str:
-        """Extract text from a document using Textract or direct read."""
+        """Extract text from a document."""
         logger.info("Extracting text", extra={"file_key": file_key})
 
         extension = file_key.rsplit(".", 1)[-1].lower() if "." in file_key else ""
 
-        if extension in ("png", "jpg", "jpeg"):
-            return self._extract_image_text(file_key)
-        elif extension == "pdf":
+        if extension == "pdf":
             return self._extract_pdf_text(file_key)
         elif extension == "txt":
             return self._read_text_file(file_key)
         else:
             raise ValueError(f"Unsupported file type: .{extension}")
 
-    def _extract_image_text(self, file_key: str) -> str:
-        """Extract text from a single image using synchronous Textract."""
-        response = self.textract.detect_document_text(
-            Document={"S3Object": {"Bucket": UPLOADS_BUCKET, "Name": file_key}}
-        )
-        return self._blocks_to_text(response["Blocks"])
-
     def _extract_pdf_text(self, file_key: str) -> str:
-        """Extract text from a PDF using async Textract (supports multi-page)."""
-        job = self.textract.start_document_text_detection(
-            DocumentLocation={
-                "S3Object": {"Bucket": UPLOADS_BUCKET, "Name": file_key}
-            }
-        )
-        job_id = job["JobId"]
-        logger.info("Started Textract job", extra={"job_id": job_id})
+        """Extract text from a PDF using pypdf (pure Python, no AWS service needed)."""
+        response = self.s3.get_object(Bucket=UPLOADS_BUCKET, Key=file_key)
+        pdf_bytes = response["Body"].read()
 
-        # Poll for completion
-        elapsed = 0
-        while elapsed < _TEXTRACT_POLL_TIMEOUT:
-            result = self.textract.get_document_text_detection(JobId=job_id)
-            status = result["JobStatus"]
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        pages = []
+        for page in reader.pages:
+            text = page.extract_text()
+            if text:
+                pages.append(text)
 
-            if status == "SUCCEEDED":
-                break
-            elif status == "FAILED":
-                raise RuntimeError(
-                    f"Textract job failed: {result.get('StatusMessage', 'unknown error')}"
-                )
-
-            time.sleep(_TEXTRACT_POLL_INTERVAL)
-            elapsed += _TEXTRACT_POLL_INTERVAL
-        else:
-            raise RuntimeError("Textract job timed out")
-
-        # Collect all pages
-        all_text = self._blocks_to_text(result["Blocks"])
-        next_token = result.get("NextToken")
-        while next_token:
-            result = self.textract.get_document_text_detection(
-                JobId=job_id, NextToken=next_token
-            )
-            all_text += "\n" + self._blocks_to_text(result["Blocks"])
-            next_token = result.get("NextToken")
-
-        return all_text
+        return "\n\n".join(pages)
 
     def _read_text_file(self, file_key: str) -> str:
         """Read a plain text file directly from S3."""
         response = self.s3.get_object(Bucket=UPLOADS_BUCKET, Key=file_key)
         return response["Body"].read().decode("utf-8")
-
-    @staticmethod
-    def _blocks_to_text(blocks: list) -> str:
-        """Extract LINE-type blocks from Textract output into plain text."""
-        return "\n".join(
-            block["Text"] for block in blocks if block["BlockType"] == "LINE"
-        )
 
     async def process_upload(self, file_key: str, file_type: str) -> dict:
         """Process an uploaded file and return extracted context."""
