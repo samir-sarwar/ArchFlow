@@ -18,6 +18,9 @@ pydub>=0.25.1
 aws-sdk-bedrock-runtime>=0.1.0
 smithy-aws-core>=0.1.0
 
+# PDF Processing
+pypdf>=4.0.0
+
 # Utilities
 python-dateutil>=2.8
 
