@@ -59,11 +59,17 @@ export function useConversation() {
     conversationStore.setIsConnected(isConnected);
   }, [isConnected]);
 
-  // Restore session on reconnect if sessionId exists
+  // Restore session on connect — only on fresh page load (no messages in memory).
+  // Mid-session reconnects (e.g. after idle timeout during voice) keep live state.
   useEffect(() => {
     if (!isConnected) return;
     const savedSessionId = localStorage.getItem('archflow_sessionId');
     if (savedSessionId) {
+      const currentMessages = useConversationStore.getState().messages;
+      if (currentMessages.length > 0) {
+        // Reconnected mid-session — keep live frontend state
+        return;
+      }
       wsSend({
         action: 'restore_session',
         sessionId: savedSessionId,
@@ -170,12 +176,14 @@ export function useConversation() {
         if (payload.currentDiagram) {
           restoreDiagram(payload.currentDiagram, (payload.diagramVersions as []) || []);
         }
+        clearTimeout(responseTimeoutRef.current);
         setLoading(false);
       }
 
       if (data.type === 'session_expired') {
         localStorage.removeItem('archflow_sessionId');
         conversationStore.clearMessages();
+        clearTimeout(responseTimeoutRef.current);
         setLoading(false);
       }
 
@@ -188,6 +196,7 @@ export function useConversation() {
 
       if (data.type === 'file_analysis') {
         const p = data.payload as {
+          fileKey?: string;
           fileName?: string;
           summary?: string;
           diagram?: string;
@@ -202,6 +211,10 @@ export function useConversation() {
         if (p.diagram) {
           updateDiagram(p.diagram, 'Generated from uploaded file');
         }
+        if (p.fileKey) {
+          window.dispatchEvent(new CustomEvent('archflow:file-ready', { detail: { fileKey: p.fileKey } }));
+        }
+        clearTimeout(responseTimeoutRef.current);
         setLoading(false);
       }
 
@@ -216,7 +229,14 @@ export function useConversation() {
         console.error('[ArchFlow] Backend error:', data.payload);
         clearTimeout(responseTimeoutRef.current);
         conversationStore.setVoiceStatus(null);
-        conversationStore.updateLastUserMessage('[Voice message failed]');
+
+        // Only overwrite the last user message if it was a voice placeholder
+        const msgs = useConversationStore.getState().messages;
+        const lastUserMsg = [...msgs].reverse().find((m) => m.role === 'user');
+        if (lastUserMsg?.isVoice) {
+          conversationStore.updateLastUserMessage('[Voice message failed]');
+        }
+
         setError((data.payload as { message: string }).message);
         setLoading(false);
       }
@@ -256,15 +276,27 @@ export function useConversation() {
     conversationStore.addMessage(userMsg);
 
     const currentDiagram = useDiagramStore.getState().currentSyntax;
-    wsSend({
+    const sent = wsSend({
       action: 'message',
       sessionId: conversationStore.sessionId,
       text: content,
       currentDiagram: currentDiagram || undefined,
     });
 
+    if (!sent) {
+      setError('Not connected to the server. Reconnecting...');
+      return;
+    }
+
     setLoading(true);
     setError(null);
+
+    // Safety timeout for text messages — prevents permanent loading state
+    clearTimeout(responseTimeoutRef.current);
+    responseTimeoutRef.current = setTimeout(() => {
+      setLoading(false);
+      setError('Response timed out. Please try again.');
+    }, 45_000);
   };
 
   // ── Streaming voice session ──
@@ -369,6 +401,8 @@ export function useConversation() {
       'When the user asks you to create, modify, visualize, or diagram any software architecture, ' +
       'use the generateDiagram tool. Briefly describe what you plan to create, then call the tool. ' +
       'After receiving the tool result, summarize what was created in the diagram. ' +
+      'If uploaded file context is provided below, use it as primary input for your advice — ' +
+      'reference specific components, technologies, and requirements from the analysis. ' +
       'Keep your spoken responses conversational and under 4-5 sentences so they feel natural when heard aloud.';
     if (currentDiagram) {
       systemPrompt += `\n\nCurrent architecture diagram:\n${currentDiagram}`;

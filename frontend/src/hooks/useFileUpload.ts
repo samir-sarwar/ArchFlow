@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { api } from '@/services/api';
 import { useConversationStore } from '@/stores/conversationStore';
 
@@ -17,7 +17,16 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
 
   const uploadFile = useCallback(
     async (file: File) => {
-      if (!sessionId) return;
+      // Auto-create session if none exists (allows uploading before first message)
+      let currentSessionId = sessionId;
+      if (!currentSessionId) {
+        currentSessionId = crypto.randomUUID();
+        useConversationStore.getState().setSessionId(currentSessionId);
+        sendWsMessage?.({
+          action: 'restore_session',
+          sessionId: currentSessionId,
+        });
+      }
 
       // Add file with uploading status
       const fileEntry: UploadedFile = {
@@ -31,7 +40,7 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
       try {
         // 1. Get presigned URL from backend
         const { uploadUrl, fileKey } = await api.uploadFile(
-          sessionId,
+          currentSessionId,
           file.name,
           file.type,
           file.size
@@ -58,7 +67,7 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
         // 4. Notify backend via WebSocket to start analysis
         sendWsMessage?.({
           action: 'file_uploaded',
-          sessionId,
+          sessionId: currentSessionId,
           fileKey,
           fileName: file.name,
           contentType: file.type,
@@ -88,6 +97,16 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
   const removeFile = useCallback((fileName: string) => {
     setFiles((prev) => prev.filter((f) => f.name !== fileName));
   }, []);
+
+  // Listen for file-ready events dispatched by useConversation when backend analysis completes
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { fileKey } = (e as CustomEvent<{ fileKey: string }>).detail;
+      if (fileKey) updateFileStatus(fileKey, 'ready');
+    };
+    window.addEventListener('archflow:file-ready', handler);
+    return () => window.removeEventListener('archflow:file-ready', handler);
+  }, [updateFileStatus]);
 
   return { files, uploadFile, removeFile, updateFileStatus };
 }
