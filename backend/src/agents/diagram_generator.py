@@ -43,6 +43,12 @@ CRITICAL Mermaid.js syntax rules — violations cause render failures:
 - No trailing commas, no semicolons at line ends
 - Sequence diagram: participants must be declared before use
 - Do NOT use HTML tags or markdown inside node labels
+
+Uploaded file context:
+- When the prompt includes an "Uploaded file analysis" section, use it as the primary source for diagram content.
+- Map the file's components, data flows, and technologies into diagram nodes and connections.
+- Use the file's patterns (e.g., "microservices", "event-driven") to choose the appropriate diagram layout.
+- Include all components and data flows from the file analysis unless the user explicitly asks for a subset.
 """
 
 
@@ -71,6 +77,9 @@ class DiagramGenerator:
 
         existing = context.current_diagram or "No existing diagram - create a new one."
 
+        from src.agents._file_context import build_file_context_block
+        file_context = build_file_context_block(context.uploaded_files)
+
         prompt = f"""Based on this architecture conversation, generate a Mermaid.js diagram.
 
 Conversation:
@@ -81,9 +90,13 @@ Existing diagram to update (if any):
 
 Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation - just the Mermaid syntax."""
 
+        system_prompt = self.system_prompt
+        if file_context:
+            system_prompt = self.system_prompt + "\n\n" + file_context
+
         diagram_syntax = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt,
             max_tokens=2048,
             reasoning_effort="medium",
         )

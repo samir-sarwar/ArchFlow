@@ -28,6 +28,12 @@ Conversation history note:
 - Messages prefixed with [Voice] came from a separate voice AI session.
   Treat them as part of the same conversation — the user spoke those messages aloud.
 - Messages without a prefix were typed in text chat.
+
+Uploaded file context:
+- When the prompt includes an "Uploaded file analysis" section, treat it as primary input.
+- Ground your architecture advice in the file's components, technologies, data flows, requirements, and constraints.
+- Reference specific items from the file analysis (e.g., "Based on the API Gateway component in your uploaded spec...").
+- If the file context contradicts or extends what the user said verbally, acknowledge both and ask which to prioritize.
 """
 
 
@@ -58,6 +64,9 @@ class ArchitectureAdvisor:
         if len(diagram_context) > 3_000:
             diagram_context = diagram_context[:3_000] + "\n... (diagram truncated)"
 
+        from src.agents._file_context import build_file_context_block
+        file_context = build_file_context_block(context.uploaded_files)
+
         prompt = f"""Given this conversation about a software architecture:
 
 {conversation}
@@ -67,9 +76,13 @@ Current diagram (if any):
 
 Provide architecture advice. If appropriate, include a Mermaid.js diagram wrapped in ```mermaid blocks."""
 
+        system_prompt = self.system_prompt
+        if file_context:
+            system_prompt = self.system_prompt + "\n\n" + file_context
+
         response_text = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
-            system_prompt=self.system_prompt,
+            system_prompt=system_prompt,
             max_tokens=2048,
             reasoning_effort="medium",
         )

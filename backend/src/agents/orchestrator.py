@@ -1,5 +1,6 @@
 from typing import Dict
 
+from src.agents._file_context import build_file_context_block
 from src.models import AgentResponse, ConversationContext, IntentType
 from src.services.bedrock_client import BedrockClient
 from src.services.state_manager import ConversationStateManager
@@ -41,7 +42,11 @@ GENERAL_CONVERSATION_PROMPT = """You are ArchFlow, a friendly AI software archit
 The user is not requesting new architecture analysis right now.
 Respond naturally and concisely.
 If the user is asking about something previously discussed in the conversation,
-answer it directly and briefly from the conversation history."""
+answer it directly and briefly from the conversation history.
+
+When an "Uploaded file analysis" section is present, use it to answer questions about \
+uploaded files or documents. Reference specific details from the analysis — components, \
+technologies, requirements, constraints, data flows — rather than giving generic answers."""
 
 
 class OrchestratorAgent:
@@ -67,6 +72,11 @@ class OrchestratorAgent:
             for m in recent
         ]
         history_str = "\n".join(history_lines) if history_lines else "(no prior conversation)"
+
+        file_names = [f.get("file_name", "") for f in context.uploaded_files if f.get("status") == "ready"]
+        if file_names:
+            history_str += f"\n\nUploaded files in this session: {', '.join(file_names)}"
+
         prompt = f"Recent conversation:\n{history_str}\n\nNew user message to classify: {message}"
 
         response = await self.bedrock.invoke_lite_thinking(
@@ -104,10 +114,16 @@ class OrchestratorAgent:
             for m in recent
         ]
         history_str = "\n".join(history_lines) if history_lines else "(no prior conversation)"
+        file_context = build_file_context_block(context.uploaded_files)
         prompt = f"Recent conversation:\n{history_str}\n\nUser's latest message: {message}"
+
+        system_prompt = GENERAL_CONVERSATION_PROMPT
+        if file_context:
+            system_prompt = GENERAL_CONVERSATION_PROMPT + "\n\n" + file_context
+
         response = await self.bedrock.invoke_lite(
             prompt=prompt,
-            system_prompt=GENERAL_CONVERSATION_PROMPT,
+            system_prompt=system_prompt,
         )
         return AgentResponse(text=response, agent_used="orchestrator")
 
