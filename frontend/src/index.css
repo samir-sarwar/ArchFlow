@@ -106,3 +106,16 @@ html.dark body {
   height: auto;
   display: block;
 }
+
+/* Give subgraph labels an opaque background so edge arrows render behind the text */
+.diagram-container .cluster-label {
+  background: #ffffde;
+  /* matches Mermaid default subgraph fill */
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+
+html.dark .diagram-container .cluster-label {
+  background: #111827;
+  /* matches custom dark clusterBkg themeVariable */
+}

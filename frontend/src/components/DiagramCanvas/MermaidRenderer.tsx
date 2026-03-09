@@ -24,8 +24,55 @@ export function MermaidRenderer({
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setRenderedSvg = useDiagramStore((s) => s.setRenderedSvg);
   const theme = useUIStore((s) => s.theme);
+
+  // --- Eagerly configure Mermaid whenever the theme changes ---
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mermaid = (window as any).mermaid;
+    if (!mermaid) return;
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme === 'dark' ? 'base' : 'default',
+      ...(theme === 'dark' && {
+        themeVariables: {
+          // Background & text
+          background: '#0a0a1a',
+          primaryTextColor: '#e2e8f0',
+          secondaryTextColor: '#cbd5e1',
+          tertiaryTextColor: '#94a3b8',
+
+          // Lines / arrows — must be visible on dark bg
+          lineColor: '#94a3b8',
+
+          // Node fills
+          primaryColor: '#1e293b',
+          primaryBorderColor: '#475569',
+          secondaryColor: '#1e1e2e',
+          secondaryBorderColor: '#475569',
+          tertiaryColor: '#1a1a2e',
+          tertiaryBorderColor: '#475569',
+
+          // Fonts
+          fontFamily: 'Inter, sans-serif',
+          fontSize: '14px',
+
+          // Cluster / subgraph
+          clusterBkg: '#111827',
+          clusterBorder: '#374151',
+          titleColor: '#e2e8f0',
+
+          // Notes & labels
+          noteBkgColor: '#1e293b',
+          noteTextColor: '#e2e8f0',
+          noteBorderColor: '#475569',
+        },
+      }),
+    });
+  }, [theme]);
 
   const renderDiagram = useCallback(async () => {
     if (!syntax) {
@@ -40,10 +87,6 @@ export function MermaidRenderer({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mermaid = (window as any).mermaid;
       if (!mermaid) throw new Error('Mermaid not loaded');
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: theme === 'dark' ? 'dark' : 'default',
-      });
 
       // Pre-validate with mermaid.parse() for clean error messages
       const validation = await validateMermaidSyntax(syntax);
@@ -70,33 +113,29 @@ export function MermaidRenderer({
   }, [syntax, theme, onRenderComplete, onError, setRenderedSvg]);
 
   const fitToView = useCallback(() => {
-    if (!transformRef.current || !wrapperRef.current) return;
+    if (!transformRef.current || !wrapperRef.current || !containerRef.current) return;
 
     const wrapperEl = wrapperRef.current;
-    const svgEl = wrapperEl.querySelector('svg');
-    if (!svgEl) {
-      transformRef.current.centerView(1, 0);
-      return;
-    }
+    const contentEl = containerRef.current;
 
-    // Get the SVG's intrinsic dimensions from viewBox or attributes
-    const viewBox = svgEl.viewBox?.baseVal;
-    const svgW = viewBox?.width || svgEl.getBBox().width || svgEl.clientWidth;
-    const svgH = viewBox?.height || svgEl.getBBox().height || svgEl.clientHeight;
+    // Use the actual rendered dimensions of the diagram container
+    const contentW = contentEl.scrollWidth || contentEl.offsetWidth;
+    const contentH = contentEl.scrollHeight || contentEl.offsetHeight;
 
     const wrapperW = wrapperEl.clientWidth;
     const wrapperH = wrapperEl.clientHeight;
 
-    if (svgW === 0 || svgH === 0 || wrapperW === 0 || wrapperH === 0) {
-      transformRef.current.centerView(1, 0);
-      return;
-    }
+    if (contentW === 0 || contentH === 0 || wrapperW === 0 || wrapperH === 0) return;
 
-    // Fit with 90% margin so diagram doesn't touch edges
-    const scale = Math.min(wrapperW / svgW, wrapperH / svgH) * 0.9;
-    const clampedScale = Math.max(0.1, Math.min(scale, 5));
+    // Fit with 85% padding so diagram doesn't touch edges
+    const scale = Math.min(wrapperW / contentW, wrapperH / contentH) * 0.85;
+    const clampedScale = Math.max(0.1, Math.min(scale, 2));
 
-    transformRef.current.centerView(clampedScale, 0);
+    // Calculate translate to center the scaled content in the wrapper
+    const x = (wrapperW - contentW * clampedScale) / 2;
+    const y = (wrapperH - contentH * clampedScale) / 2;
+
+    transformRef.current.setTransform(x, y, clampedScale, 0);
   }, []);
 
   useEffect(() => {
@@ -106,8 +145,16 @@ export function MermaidRenderer({
   // Re-fit diagram when SVG content changes (small delay for DOM paint)
   useEffect(() => {
     if (svg) {
-      const timer = requestAnimationFrame(() => fitToView());
-      return () => cancelAnimationFrame(timer);
+      const timer = setTimeout(() => {
+        fitToView();
+        // Fallback retry in case SVG dimensions weren't ready
+        const retryTimer = setTimeout(() => fitToView(), 100);
+        retryTimerRef.current = retryTimer;
+      }, 50);
+      return () => {
+        clearTimeout(timer);
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      };
     }
   }, [svg, fitToView]);
 
@@ -144,11 +191,10 @@ export function MermaidRenderer({
     <div ref={wrapperRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
       <TransformWrapper
         ref={transformRef}
-        initialScale={1}
+        initialScale={0.5}
         minScale={0.1}
         maxScale={5}
-        centerOnInit={false}
-        onInit={fitToView}
+        centerOnInit={true}
         limitToBounds={false}
         wheel={{ step: 0.05, smoothStep: 0.01 }}
         pinch={{ step: 5 }}
@@ -181,7 +227,7 @@ export function MermaidRenderer({
 
 /* ---------- Zoom Control Buttons ---------- */
 function ZoomControls({ onFitToView }: { onFitToView: () => void }) {
-  const { zoomIn, zoomOut, resetTransform } = useControls();
+  const { zoomIn, zoomOut } = useControls();
 
   return (
     <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1">
@@ -200,7 +246,7 @@ function ZoomControls({ onFitToView }: { onFitToView: () => void }) {
         −
       </button>
       <button
-        onClick={() => { resetTransform(); setTimeout(onFitToView, 50); }}
+        onClick={() => onFitToView()}
         className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
         title="Fit to view"
       >
