@@ -333,9 +333,16 @@ async def _process_uploaded_file(session_id, file_key, file_name, content_type):
         "content_type": content_type,
         "status": "ready",
         "analysis_summary": summary,
+        "file_analysis": analysis if isinstance(analysis, dict) else {"summary": summary},
     }
 
-    context = await state_manager.get_session(session_id)
+    try:
+        context = await state_manager.get_session(session_id)
+    except (SessionNotFoundError, SessionExpiredError):
+        # Session may not exist yet if file was uploaded before first message
+        await state_manager.create_session(session_id=session_id)
+        context = await state_manager.get_session(session_id)
+
     uploaded_files = context.uploaded_files + [file_metadata]
     await state_manager.update_session(session_id, {"uploaded_files": uploaded_files})
 
