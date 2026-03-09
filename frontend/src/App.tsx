@@ -7,7 +7,7 @@ import { InputBar } from '@/components/InputBar';
 import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useUIStore } from '@/stores/uiStore';
 import { Toast } from '@/components/shared/Toast';
-import { Dropzone } from '@/components/FileUpload';
+import { Dropzone, FileList } from '@/components/FileUpload';
 import { useConversation } from '@/hooks/useConversation';
 import { useFileUpload } from '@/hooks/useFileUpload';
 
@@ -16,7 +16,7 @@ export default function App() {
   const removeNotification = useUIStore((s) => s.removeNotification);
   const theme = useUIStore((s) => s.theme);
   const { sendWsMessage, isConnected } = useConversation();
-  const { uploadFile } = useFileUpload(sendWsMessage);
+  const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
 
   // Apply dark class to document root
   useEffect(() => {
@@ -51,6 +51,9 @@ export default function App() {
       {/* Top floating controls */}
       <TopControls />
 
+      {/* Uploaded file pills (top-right, below controls) */}
+      <FileList files={files} onRemove={removeFile} />
+
       {/* Chat overlay */}
       <ChatOverlay />
 
@@ -58,7 +61,7 @@ export default function App() {
       <VoiceIndicator />
 
       {/* Input bar */}
-      <InputBar />
+      <InputBar uploadFile={uploadFile} />
 
       {/* Toast Notifications */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">

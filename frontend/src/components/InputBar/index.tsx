@@ -1,18 +1,19 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { useConversation } from '@/hooks/useConversation';
-import { useFileUpload } from '@/hooks/useFileUpload';
 import { useUIStore } from '@/stores/uiStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { Mic, Plus, Send, MessageSquare } from 'lucide-react';
-import { FileList } from '@/components/FileUpload';
 
-export function InputBar() {
+interface InputBarProps {
+  uploadFile: (file: File) => void;
+}
+
+export function InputBar({ uploadFile }: InputBarProps) {
   const [input, setInput] = useState('');
   const [isMultiLine, setIsMultiLine] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { sendMessage, sendWsMessage, isConnected } = useConversation();
-  const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
+  const { sendMessage, isConnected } = useConversation();
   const isLoading = useUIStore((s) => s.isLoading);
   const chatOverlayOpen = useUIStore((s) => s.chatOverlayOpen);
   const toggleChatOverlay = useUIStore((s) => s.toggleChatOverlay);
@@ -68,19 +69,11 @@ export function InputBar() {
 
   return (
     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4">
-      {/* File chips */}
-      {files.length > 0 && (
-        <div className="mb-2 glass rounded-xl px-3 py-2 animate-fade-in">
-          <FileList files={files} onRemove={removeFile} />
-        </div>
-      )}
-
       {/* Main input bar */}
       <form
         onSubmit={handleSubmit}
-        className={`glass-input flex flex-col shadow-lg shadow-gray-300/30 dark:shadow-black/20 animate-slide-up transition-[border-radius] duration-200 ${
-          isMultiLine ? 'rounded-2xl' : 'rounded-[24px]'
-        }`}
+        className={`glass-input flex flex-col shadow-lg shadow-gray-300/30 dark:shadow-black/20 animate-slide-up transition-[border-radius] duration-200 ${isMultiLine ? 'rounded-2xl' : 'rounded-[24px]'
+          }`}
       >
         {/* Text input */}
         <textarea
@@ -106,11 +99,10 @@ export function InputBar() {
             <button
               type="button"
               onClick={toggleChatOverlay}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
-                chatOverlayOpen
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${chatOverlayOpen
                   ? 'bg-primary-100 text-primary-600 border border-primary-200 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/30'
                   : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/50 dark:hover:text-white/70 dark:hover:bg-white/5'
-              }`}
+                }`}
               title="Toggle chat"
             >
               <MessageSquare className="w-3.5 h-3.5" />
@@ -143,11 +135,10 @@ export function InputBar() {
             <button
               type="button"
               disabled={!isConnected}
-              className={`p-2 rounded-full transition-colors disabled:opacity-30 ${
-                isRecording
+              className={`p-2 rounded-full transition-colors disabled:opacity-30 ${isRecording
                   ? 'text-red-500 bg-red-100 dark:text-red-400 dark:bg-red-500/20'
                   : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/40 dark:hover:text-white/70 dark:hover:bg-white/5'
-              }`}
+                }`}
               title="Voice input"
               onClick={() => {
                 window.dispatchEvent(new CustomEvent('toggle-voice-recording'));
