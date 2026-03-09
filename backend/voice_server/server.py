@@ -120,6 +120,46 @@ def _build_history_summary(history: list[dict], max_chars: int = 350) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
+def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 2000) -> str:
+    """Build a file analysis summary for the voice system prompt."""
+    analyzed = [f for f in uploaded_files if f.get("file_analysis")]
+    if not analyzed:
+        return ""
+
+    lines = ["Uploaded file context:"]
+    total = 0
+    for f in analyzed:
+        analysis = f["file_analysis"]
+        name = f.get("file_name", "file")
+        parts = [f"- {name}:"]
+        if isinstance(analysis, dict):
+            if analysis.get("summary"):
+                parts.append(f"  Summary: {analysis['summary'][:200]}")
+            for key in ("components", "technologies", "patterns", "data_flows"):
+                items = analysis.get(key, [])
+                if items and isinstance(items, list):
+                    parts.append(f"  {key.replace('_', ' ').title()}: {', '.join(str(i) for i in items[:10])}")
+            reqs = analysis.get("requirements")
+            if isinstance(reqs, dict):
+                for rtype in ("functional", "non_functional"):
+                    r_list = reqs.get(rtype, [])
+                    if r_list and isinstance(r_list, list):
+                        parts.append(f"  {rtype.replace('_', ' ').title()} requirements: {', '.join(str(r) for r in r_list[:5])}")
+            constraints = analysis.get("constraints", [])
+            if constraints and isinstance(constraints, list):
+                parts.append(f"  Constraints: {', '.join(str(c) for c in constraints[:5])}")
+        else:
+            parts.append(f"  {str(analysis)[:300]}")
+
+        block = "\n".join(parts)
+        if total + len(block) > max_chars:
+            break
+        lines.append(block)
+        total += len(block)
+
+    return "\n".join(lines) if len(lines) > 1 else ""
+
+
 # ─── Nova Sonic → ArchFlow event translator ───
 
 async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, session_id: str | None, db_client: VoiceSessionDBClient):
@@ -389,8 +429,14 @@ async def _websocket_handler(websocket):
                         stream_manager = None
                         continue
 
-                    # Forward sessionStart to Bedrock
-                    await stream_manager.send_raw_event(data)
+                    # Forward sessionStart to Bedrock (strip non-protocol sessionId field)
+                    forwarded = dict(data)
+                    forwarded["event"] = dict(data["event"])
+                    forwarded["event"]["sessionStart"] = {
+                        k: v for k, v in data["event"]["sessionStart"].items()
+                        if k != "sessionId"
+                    }
+                    await stream_manager.send_raw_event(forwarded)
 
                 # ── sessionEnd from BROWSER: forward then cleanup ──
                 # (In normal flow the server closes the session after completionEnd.
@@ -435,19 +481,28 @@ async def _websocket_handler(websocket):
                         # If this is the system prompt block and we have a session, enrich with history
                         if system_content_name and content_name == system_content_name and session_id:
                             try:
-                                history = await asyncio.to_thread(db_client.get_session_history, session_id)
+                                history, uploaded_files = await asyncio.gather(
+                                    asyncio.to_thread(db_client.get_session_history, session_id),
+                                    asyncio.to_thread(db_client.get_uploaded_files, session_id),
+                                )
                                 summary = _build_history_summary(history)
-                                if summary:
+                                file_summary = _build_file_context_summary(uploaded_files)
+                                enrichment = "\n\n".join(filter(None, [summary, file_summary]))
+                                if enrichment:
                                     enriched = dict(data)
                                     enriched["event"] = dict(data["event"])
                                     enriched["event"]["textInput"] = dict(data["event"]["textInput"])
-                                    enriched["event"]["textInput"]["content"] = content + "\n\n" + summary
-                                    logger.info("Injecting history summary (%d chars) into system prompt for session %s", len(summary), session_id)
+                                    enriched["event"]["textInput"]["content"] = content + "\n\n" + enrichment
+                                    logger.info("Injecting context (%d chars) into system prompt for session %s", len(enrichment), session_id)
                                     await stream_manager.send_raw_event(enriched)
                                 else:
+                                    logger.info(
+                                        "No enrichment context for session %s (history=%d msgs, files=%d)",
+                                        session_id, len(history), len(uploaded_files),
+                                    )
                                     await stream_manager.send_raw_event(data)
                             except Exception as e:
-                                logger.error("Failed to inject history into system prompt: %s", e)
+                                logger.error("Failed to inject context into system prompt: %s", e, exc_info=True)
                                 await stream_manager.send_raw_event(data)
                         else:
                             await stream_manager.send_raw_event(data)

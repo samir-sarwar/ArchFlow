@@ -25,6 +25,33 @@ class VoiceSessionDBClient:
             logger.error("Failed to fetch session history for %s: %s", session_id, exc)
             return []
 
+    def get_uploaded_files(self, session_id: str) -> list[dict]:
+        """Retrieve uploaded file metadata (including analysis) for a session."""
+        try:
+            response = self.table.get_item(
+                Key={"session_id": session_id},
+                ProjectionExpression="uploaded_files",
+            )
+            if "Item" in response:
+                files = response["Item"].get("uploaded_files", [])
+                analyzed = [f for f in files if f.get("file_analysis")]
+                logger.info(
+                    "get_uploaded_files(%s): %d files, %d with analysis (table=%s)",
+                    session_id, len(files), len(analyzed), self.table_name,
+                )
+                return files
+            logger.info(
+                "get_uploaded_files(%s): no session item found in table %s",
+                session_id, self.table_name,
+            )
+            return []
+        except Exception as exc:
+            logger.error(
+                "FAILED to fetch uploaded files for %s from table %s: %s",
+                session_id, self.table_name, exc,
+            )
+            return []
+
     def append_voice_interaction(self, session_id: str, user_text: str, ai_text: str) -> None:
         """Append a voice interaction (user transcript + AI response) to DynamoDB."""
         if not user_text and not ai_text:
