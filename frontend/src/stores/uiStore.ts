@@ -7,6 +7,7 @@ interface Notification {
 }
 
 type Theme = 'light' | 'dark';
+type ActiveView = 'preview' | 'code';
 
 const getStoredTheme = (): Theme => {
   try {
@@ -25,6 +26,7 @@ interface UIStore {
   sidebarOpen: boolean;
   chatOverlayOpen: boolean;
   theme: Theme;
+  activeView: ActiveView;
 
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -37,6 +39,7 @@ interface UIStore {
   setChatOverlayOpen: (open: boolean) => void;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
+  setActiveView: (view: ActiveView) => void;
 }
 
 export const useUIStore = create<UIStore>((set) => ({
@@ -46,6 +49,7 @@ export const useUIStore = create<UIStore>((set) => ({
   sidebarOpen: true,
   chatOverlayOpen: true,
   theme: getStoredTheme(),
+  activeView: 'preview',
 
   setLoading: (loading) => set({ isLoading: loading }),
 
@@ -84,4 +88,6 @@ export const useUIStore = create<UIStore>((set) => ({
       document.documentElement.classList.toggle('dark', next === 'dark');
       return { theme: next };
     }),
+
+  setActiveView: (view) => set({ activeView: view }),
 }));

@@ -1,10 +1,12 @@
 import { MermaidRenderer } from './MermaidRenderer';
+import { MermaidCodeEditor } from './MermaidCodeEditor';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useUIStore } from '@/stores/uiStore';
 
 export function DiagramCanvas() {
   const currentSyntax = useDiagramStore((s) => s.currentSyntax);
+  const activeView = useUIStore((s) => s.activeView);
   const sessionId = useConversationStore((s) => s.sessionId);
   const addMessage = useConversationStore((s) => s.addMessage);
   const wsSend = useConversationStore((s) => s._wsSend);
@@ -31,8 +33,13 @@ export function DiagramCanvas() {
   };
 
   return (
-    <div className="w-full h-full overflow-hidden">
-      <MermaidRenderer syntax={currentSyntax} onAskToFix={handleAskToFix} />
+    <div className="w-full h-full overflow-hidden relative">
+      <div className={activeView === 'preview' ? 'block w-full h-full' : 'hidden'}>
+        <MermaidRenderer syntax={currentSyntax} onAskToFix={handleAskToFix} />
+      </div>
+      <div className={activeView === 'code' ? 'block w-full h-full' : 'hidden'}>
+        <MermaidCodeEditor />
+      </div>
     </div>
   );
 }

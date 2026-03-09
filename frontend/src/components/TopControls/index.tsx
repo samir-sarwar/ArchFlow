@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useDiagramStore } from '@/stores/diagramStore';
+import { useUIStore } from '@/stores/uiStore';
 import { downloadBlob, generateExportFilename } from '@/utils/downloadFile';
 import {
   Undo2,
@@ -8,11 +9,15 @@ import {
   Image,
   FileCode,
   Copy,
+  Eye,
+  Code2,
 } from 'lucide-react';
 
 export function TopControls() {
   const { undo, redo, historyIndex, history, currentSyntax, renderedSvg } =
     useDiagramStore();
+  const activeView = useUIStore((s) => s.activeView);
+  const setActiveView = useUIStore((s) => s.setActiveView);
   const [exportOpen, setExportOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -81,6 +86,34 @@ export function TopControls() {
 
   return (
     <div className="fixed top-4 right-4 z-20 flex items-center gap-1 glass rounded-xl px-1 py-1 animate-fade-in">
+      {/* Preview / Code toggle */}
+      <div className="flex items-center bg-gray-100/50 dark:bg-white/5 rounded-lg p-0.5">
+        <button
+          onClick={() => setActiveView('preview')}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+            activeView === 'preview'
+              ? 'bg-white dark:bg-white/15 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60'
+          }`}
+        >
+          <Eye className="w-3.5 h-3.5" />
+          Preview
+        </button>
+        <button
+          onClick={() => setActiveView('code')}
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+            activeView === 'code'
+              ? 'bg-white dark:bg-white/15 text-gray-900 dark:text-white shadow-sm'
+              : 'text-gray-400 dark:text-white/40 hover:text-gray-600 dark:hover:text-white/60'
+          }`}
+        >
+          <Code2 className="w-3.5 h-3.5" />
+          Code
+        </button>
+      </div>
+
+      <div className="w-px h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+
       <button
         onClick={undo}
         disabled={historyIndex <= 0}

@@ -97,7 +97,8 @@ export function MermaidRenderer({
         return;
       }
 
-      const { svg: renderedSvg } = await mermaid.render('diagram', syntax);
+      const id = `diagram-${Date.now()}`;
+      const { svg: renderedSvg } = await mermaid.render(id, syntax);
       setSvg(renderedSvg);
       setRenderError(null);
       setRenderedSvg(renderedSvg);
