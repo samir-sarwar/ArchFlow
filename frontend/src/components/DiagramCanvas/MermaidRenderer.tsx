@@ -163,7 +163,7 @@ export function MermaidRenderer({
 
   if (renderError) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 p-6">
+      <div className="diagram-grid flex flex-col items-center justify-center h-full gap-4 p-6">
         <div className="w-full max-w-lg glass rounded-xl p-4 border border-red-200 dark:border-red-500/20">
           <p className="text-sm font-medium text-red-600 dark:text-red-300 mb-1">Diagram syntax error</p>
           <p className="text-xs text-red-500 dark:text-red-400/80 font-mono break-all">{renderError}</p>
@@ -182,14 +182,14 @@ export function MermaidRenderer({
 
   if (!svg) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-300 dark:text-white/20">
+      <div className="diagram-grid flex items-center justify-center h-full text-gray-300 dark:text-white/20">
         <p>Your diagram will appear here</p>
       </div>
     );
   }
 
   return (
-    <div ref={wrapperRef} style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div ref={wrapperRef} className="diagram-grid" style={{ width: '100%', height: '100%', position: 'relative' }}>
       <TransformWrapper
         ref={transformRef}
         initialScale={0.5}

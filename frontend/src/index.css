@@ -95,6 +95,20 @@ html.dark body {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* Diagram grid background */
+.diagram-grid {
+  background-size: 24px 24px;
+  background-image:
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+}
+
+html.dark .diagram-grid {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+}
+
 /* Mermaid diagram SVG sizing */
 .diagram-container {
   /* line-height handled by svg { display: block } below */
