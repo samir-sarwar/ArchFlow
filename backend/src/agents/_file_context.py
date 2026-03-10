@@ -25,20 +25,20 @@ def build_file_context_block(uploaded_files: list[dict], max_chars: int = 10000)
             for key in ("components", "patterns", "technologies", "data_flows"):
                 items = analysis.get(key, [])
                 if items and isinstance(items, list):
-                    parts.append(f"{key.replace('_', ' ').title()}: {', '.join(str(i) for i in items[:15])}")
+                    parts.append(f"{key.replace('_', ' ').title()}: {', '.join(str(i) for i in items)}")
             reqs = analysis.get("requirements")
             if isinstance(reqs, dict):
                 for rtype in ("functional", "non_functional"):
                     r_list = reqs.get(rtype, [])
                     if r_list and isinstance(r_list, list):
-                        parts.append(f"{rtype.replace('_', ' ').title()} requirements: {', '.join(str(r) for r in r_list[:8])}")
+                        parts.append(f"{rtype.replace('_', ' ').title()} requirements: {', '.join(str(r) for r in r_list)}")
             elif isinstance(reqs, list) and reqs:
-                parts.append(f"Requirements: {', '.join(str(r) for r in reqs[:8])}")
+                parts.append(f"Requirements: {', '.join(str(r) for r in reqs)}")
             constraints = analysis.get("constraints", [])
             if constraints and isinstance(constraints, list):
-                parts.append(f"Constraints: {', '.join(str(c) for c in constraints[:8])}")
+                parts.append(f"Constraints: {', '.join(str(c) for c in constraints)}")
         else:
-            parts.append(str(analysis)[:500])
+            parts.append(str(analysis)[:2000])
 
         block = "\n".join(parts)
         if total + len(block) > max_chars:
