@@ -12,7 +12,9 @@ export function ChatOverlay() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const displayMessages =
-    viewMode === 'transcript' ? messages.filter((m) => m.isVoice) : messages;
+    viewMode === 'transcript'
+      ? messages.filter((m) => m.isVoice)
+      : messages.filter((m) => !m.isVoice && m.agent !== 'context_analyzer');
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {

@@ -1,7 +1,7 @@
 """Shared helper to format uploaded file analyses into prompt context."""
 
 
-def build_file_context_block(uploaded_files: list[dict], max_chars: int = 3000) -> str:
+def build_file_context_block(uploaded_files: list[dict], max_chars: int = 10000) -> str:
     """Format uploaded file analyses into a prompt block for downstream agents.
 
     Returns an empty string when no analyzed files exist, so callers can
