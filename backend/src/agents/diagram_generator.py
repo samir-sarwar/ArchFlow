@@ -75,20 +75,41 @@ class DiagramGenerator:
         if len(conversation) > 12_000:
             conversation = conversation[-12_000:]
 
-        existing = context.current_diagram or "No existing diagram - create a new one."
-
         from src.agents._file_context import build_file_context_block
         file_context = build_file_context_block(context.uploaded_files)
 
-        prompt = f"""Based on this architecture conversation, generate a Mermaid.js diagram.
+        if context.current_diagram:
+            latest_user_msg = next(
+                (m.content for m in reversed(recent_messages) if m.role == "user"), ""
+            )
+            prompt = f"""You are MODIFYING an existing architecture diagram. Do NOT create a new diagram from scratch.
+
+TASK: Apply ONLY the change described in the change request below.
+
+EXISTING DIAGRAM (this is the base — preserve everything not mentioned in the change request):
+{context.current_diagram}
+
+Conversation context:
+{conversation}
+
+CHANGE REQUEST: {latest_user_msg}
+
+RULES — CRITICAL:
+1. Start from the EXISTING DIAGRAM above as your base. Copy it exactly.
+2. Apply ONLY the specific change(s) mentioned in the change request.
+3. Preserve ALL existing nodes, subgraphs, connections, and labels not directly affected by the change.
+4. Do NOT reorganise, rename, or remove nodes that the user did not mention.
+5. If adding a new node, choose a node ID consistent with the existing naming convention.
+6. Exception: if the user explicitly says "start over", "redesign", "create a new diagram", or "from scratch", ignore rules 1-5 and generate a completely new diagram.
+
+Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation."""
+        else:
+            prompt = f"""Based on this architecture conversation, generate a new Mermaid.js diagram.
 
 Conversation:
 {conversation}
 
-Existing diagram to update (if any):
-{existing}
-
-Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation - just the Mermaid syntax."""
+Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation."""
 
         system_prompt = self.system_prompt
         if file_context:

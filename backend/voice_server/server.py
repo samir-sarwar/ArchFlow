@@ -95,7 +95,7 @@ def _start_health_server(host: str, port: int):
 
 # ─── History summary builder ───
 
-def _build_history_summary(history: list[dict], max_chars: int = 350) -> str:
+def _build_history_summary(history: list[dict], max_chars: int = 1500) -> str:
     """Build a compact conversation summary to append to the system prompt."""
     relevant = [
         m for m in history
@@ -105,13 +105,13 @@ def _build_history_summary(history: list[dict], max_chars: int = 350) -> str:
     ]
     if not relevant:
         return ""
-    # Last 4 messages (2 turns) max
-    recent = relevant[-4:]
+    # Last 10 messages (5 turns) for meaningful architecture context
+    recent = relevant[-10:]
     lines = ["Relevant prior conversation:"]
     total = 0
     for msg in recent:
         role = "User" if msg["role"] == "user" else "Assistant"
-        snippet = msg["content"].strip().replace("\n", " ")[:120]
+        snippet = msg["content"].strip().replace("\n", " ")[:250]
         line = f"- {role}: {snippet}"
         if total + len(line) > max_chars:
             break
@@ -487,6 +487,9 @@ async def _websocket_handler(websocket):
                                 )
                                 summary = _build_history_summary(history)
                                 file_summary = _build_file_context_summary(uploaded_files)
+                                # Store history on stream manager so DiagramTool can use it
+                                if summary:
+                                    stream_manager.conversation_history = summary
                                 enrichment = "\n\n".join(filter(None, [summary, file_summary]))
                                 if enrichment:
                                     enriched = dict(data)

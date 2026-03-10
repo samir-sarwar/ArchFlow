@@ -157,7 +157,10 @@ class DiagramTool:
         return response["output"]["message"]["content"][0]["text"]
 
     async def generate(
-        self, request: str, current_diagram: str | None = None
+        self,
+        request: str,
+        current_diagram: str | None = None,
+        conversation_history: str | None = None,
     ) -> dict:
         """
         Generate or update a Mermaid diagram.
@@ -166,15 +169,45 @@ class DiagramTool:
             {"diagram": str, "summary": str} on success
             {"error": str} on failure
         """
-        existing = current_diagram or "No existing diagram - create a new one."
-
-        prompt = (
-            f"Based on this architecture request, generate a Mermaid.js diagram.\n\n"
-            f"Request:\n{request}\n\n"
-            f"Existing diagram to update (if any):\n{existing}\n\n"
-            f"Output ONLY valid Mermaid.js syntax. "
-            f"Do not wrap in code fences. Do not include any explanation."
-        )
+        if current_diagram:
+            history_section = (
+                f"\nConversation context:\n{conversation_history}\n"
+                if conversation_history
+                else ""
+            )
+            prompt = (
+                f"You are MODIFYING an existing architecture diagram. "
+                f"Do NOT create a new diagram from scratch.\n\n"
+                f"TASK: Apply ONLY the change described in the change request below.\n\n"
+                f"EXISTING DIAGRAM (this is the base — preserve everything "
+                f"not mentioned in the change request):\n{current_diagram}\n"
+                f"{history_section}\n"
+                f"CHANGE REQUEST: {request}\n\n"
+                f"RULES — CRITICAL:\n"
+                f"1. Start from the EXISTING DIAGRAM above as your base. Copy it exactly.\n"
+                f"2. Apply ONLY the specific change(s) mentioned in the change request.\n"
+                f"3. Preserve ALL existing nodes, subgraphs, connections, "
+                f"and labels not directly affected by the change.\n"
+                f"4. Do NOT reorganise, rename, or remove nodes the user did not mention.\n"
+                f"5. If adding a new node, choose a node ID consistent with the existing naming convention.\n"
+                f"6. Exception: if the user explicitly says 'start over', 'redesign', "
+                f"'create a new diagram', or 'from scratch', ignore rules 1-5 and generate a new diagram.\n\n"
+                f"Output ONLY valid Mermaid.js syntax. "
+                f"Do not wrap in code fences. Do not include any explanation."
+            )
+        else:
+            history_section = (
+                f"Conversation context:\n{conversation_history}\n\n"
+                if conversation_history
+                else ""
+            )
+            prompt = (
+                f"Based on this architecture request, generate a new Mermaid.js diagram.\n\n"
+                f"{history_section}"
+                f"Request:\n{request}\n\n"
+                f"Output ONLY valid Mermaid.js syntax. "
+                f"Do not wrap in code fences. Do not include any explanation."
+            )
 
         loop = asyncio.get_event_loop()
 

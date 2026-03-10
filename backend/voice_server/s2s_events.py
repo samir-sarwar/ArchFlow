@@ -37,8 +37,12 @@ ARCHFLOW_TOOL_CONFIG = {
                             "request": {
                                 "type": "string",
                                 "description": (
-                                    "What to diagram, including any specific components, "
-                                    "services, patterns, or modifications to the existing diagram"
+                                    "Describe ONLY the change being requested. "
+                                    "If modifying an existing diagram, describe WHAT to add, remove, or change "
+                                    "— do NOT describe the entire existing architecture again. "
+                                    "Examples: 'Add a Redis cache between the API and the database', "
+                                    "'Replace PostgreSQL with DynamoDB', "
+                                    "'Add an SQS queue between the order service and fulfillment service'."
                                 ),
                             }
                         },

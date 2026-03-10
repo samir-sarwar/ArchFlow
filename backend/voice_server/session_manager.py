@@ -53,6 +53,7 @@ class S2sSessionManager:
         self.prompt_name: str | None = None
         self.audio_content_name: str | None = None
         self.current_diagram: str | None = None
+        self.conversation_history: str | None = None
 
         self._background_tasks: set = set()
 
@@ -279,6 +280,7 @@ class S2sSessionManager:
                 result = await self.diagram_tool.generate(
                     request=request,
                     current_diagram=self.current_diagram,
+                    conversation_history=self.conversation_history,
                 )
 
                 # If diagram was generated, notify frontend
