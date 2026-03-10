@@ -32,14 +32,34 @@ Output rules:
 - Keep diagrams readable (max ~30 nodes before suggesting splits)
 
 Layout rules (apply to all diagram types where applicable):
-- Default to `graph TD` (top-down) with the entry point (API Gateway, Client, User) at the top
+- Default to `flowchart TD` (top-down) with the entry point (API Gateway, Client, User) at the top
 - Group related nodes into subgraphs to contain connections and reduce line crossings:
   - Databases and storage in a "Data Stores" subgraph at the bottom
   - Security, logging, tracing, and monitoring in a "Security & Monitoring" subgraph
   - Core services in their own logical subgraph(s)
 - Use dotted arrows `-.->` for background/non-critical-path connections (logging, tracing, metrics, monitoring) to visually separate them from the main request flow (`-->`)
 - Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout and minimise line crossings
-- Consolidate multi-point links: when multiple nodes connect to the same destination (e.g., a logger, shared database, global state), do NOT draw individual lines from each node. Instead, link from the subgraph boundary to the destination, or create a "Hub" node to aggregate the traffic into a single connection.
+
+CRITICAL — Edge consolidation (MUST follow, violations create unreadable diagrams):
+- NEVER draw N separate edges from N source nodes to the same destination. This creates a tangled mess.
+- Instead, create an invisible collector node or link from the subgraph boundary:
+
+  BAD (creates 5 crossing lines):
+    service_a -.->|logs| logger
+    service_b -.->|logs| logger
+    service_c -.->|logs| logger
+
+  GOOD (single clean connection):
+    core_services -.->|logs| logger
+
+  ALSO GOOD (hub node):
+    service_a -.-> log_hub["  "]
+    service_b -.-> log_hub
+    service_c -.-> log_hub
+    log_hub -.->|logs| logger
+
+- Apply this to ALL shared destinations: loggers, monitors, tracers, shared databases, auth services, etc.
+- Maximum edges between any two subgraphs should be 1-2 lines, not one per source node.
 
 When updating existing diagrams:
 - Preserve existing structure where possible

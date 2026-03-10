@@ -37,6 +37,14 @@ export function MermaidRenderer({
     mermaid.initialize({
       startOnLoad: false,
       theme: theme === 'dark' ? 'base' : 'default',
+      flowchart: {
+        curve: 'basis',
+        nodeSpacing: 60,
+        rankSpacing: 80,
+        padding: 20,
+        htmlLabels: true,
+        defaultRenderer: 'elk',
+      },
       ...(theme === 'dark' && {
         themeVariables: {
           // Background & text
