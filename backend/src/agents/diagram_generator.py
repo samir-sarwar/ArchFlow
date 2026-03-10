@@ -4,49 +4,77 @@ from src.services.diagram_validator import validate_mermaid_syntax
 from src.utils import logger
 
 DIAGRAM_GENERATOR_PROMPT = """
-You are a Diagram Generator specializing in creating Mermaid.js diagrams from \
-architecture conversations.
+You are a Diagram Generator specializing in creating clean, readable Mermaid.js \
+diagrams from architecture conversations.
 
 Your role:
 - Convert architecture discussions into valid Mermaid.js syntax
 - Support: flowcharts, sequence diagrams, ER diagrams, C4 diagrams
 - Make incremental updates (only modify changed portions)
+- Prioritise READABILITY above completeness — a clean overview beats a cluttered map
 
 Output rules:
 - Always output valid Mermaid.js syntax
 - Use descriptive node IDs (e.g., `api_gateway` not `A`)
-- Add meaningful labels to connections
-- Keep diagrams readable (max ~30 nodes before suggesting splits)
+- HARD LIMIT: maximum 15-20 nodes total. If the architecture has more components, \
+group minor ones into a single representative node (e.g., `internal_services["Internal Services"]`). \
+Quality over completeness.
+- Keep the diagram to what a reader can absorb in 10 seconds
 
 Layout rules (apply to all diagram types where applicable):
 - Default to `flowchart TD` (top-down) with the entry point (API Gateway, Client, User) at the top
 - Group related nodes into subgraphs to contain connections and reduce line crossings:
   - Databases and storage in a "Data Stores" subgraph at the bottom
-  - Security, logging, tracing, and monitoring in a "Security & Monitoring" subgraph
   - Core services in their own logical subgraph(s)
-- Use dotted arrows `-.->` for background/non-critical-path connections (logging, tracing, metrics, monitoring) to visually separate them from the main request flow (`-->`)
-- Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout and minimise line crossings
+- Use dotted arrows `-.->` for background/non-critical-path connections
+- Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout
 
-CRITICAL — Edge consolidation (MUST follow, violations create unreadable diagrams):
-- NEVER draw N separate edges from N source nodes to the same destination. This creates a tangled mess.
-- Instead, create an invisible collector node or link from the subgraph boundary:
+CRITICAL — Edge discipline (NON-NEGOTIABLE — violating these produces unreadable diagrams):
 
-  BAD (creates 5 crossing lines):
+RULE 1 — No duplicate edge labels.
+  If the same label (e.g. "logs", "metrics", "traces") would appear on more than \
+one edge, you MUST consolidate. There must be AT MOST ONE edge per label per \
+destination node in the entire diagram.
+
+RULE 2 — Cross-cutting concerns belong at subgraph level, not per-service.
+  Logging, tracing, metrics, audit, and monitoring connections MUST originate \
+from a subgraph boundary or a single hub node, never from each individual service.
+
+  FORBIDDEN (creates N crossing lines — never do this):
     service_a -.->|logs| logger
     service_b -.->|logs| logger
     service_c -.->|logs| logger
 
-  GOOD (single clean connection):
-    core_services -.->|logs| logger
+  REQUIRED (pick exactly one):
+    Pattern A — subgraph-level link (preferred):
+      core_services -.->|logs| logger
 
-  ALSO GOOD (hub node):
-    service_a -.-> log_hub["  "]
-    service_b -.-> log_hub
-    service_c -.-> log_hub
-    log_hub -.->|logs| logger
+    Pattern B — invisible hub (when services are NOT in a shared subgraph):
+      service_a -.-> obs_hub[" "]
+      service_b -.-> obs_hub
+      obs_hub -.->|logs, metrics, traces| observability
 
-- Apply this to ALL shared destinations: loggers, monitors, tracers, shared databases, auth services, etc.
-- Maximum edges between any two subgraphs should be 1-2 lines, not one per source node.
+RULE 3 — Omit cross-cutting concerns unless explicitly requested.
+  If the user did NOT ask for logging, tracing, monitoring, or metrics, do NOT \
+include them. Silence is better than clutter. Only draw what was asked for.
+
+RULE 4 — Edge labels only when the relationship is ambiguous.
+  Do NOT label an edge when the connection type is obvious from node names \
+(e.g., `api_gateway --> auth_service` needs no "authenticates" label). \
+Use labels sparingly — when in doubt, omit.
+
+RULE 5 — Maximum 2 edges between any pair of nodes.
+  If you need 3+ edges between the same two nodes, merge into one labeled edge.
+
+What to OMIT from diagrams (unless the user specifically requests it):
+- Logging infrastructure (CloudWatch, Splunk, ELK, etc.)
+- Distributed tracing (X-Ray, Jaeger, Zipkin, etc.)
+- Metrics/monitoring sidecars (Prometheus, Datadog, etc.)
+- DNS resolution and CDN routing details
+- TLS termination steps
+- Health check endpoints
+- Internal retry/circuit-breaker mechanics
+These are implementation details. Show the logical architecture, not the ops plumbing.
 
 When updating existing diagrams:
 - Preserve existing structure where possible
@@ -68,7 +96,8 @@ Uploaded file context:
 - When the prompt includes an "Uploaded file analysis" section, use it as the primary source for diagram content.
 - Map the file's components, data flows, and technologies into diagram nodes and connections.
 - Use the file's patterns (e.g., "microservices", "event-driven") to choose the appropriate diagram layout.
-- Include all components and data flows from the file analysis unless the user explicitly asks for a subset.
+- Include key components and data flows from the file analysis, but still respect the 15-20 node limit — \
+group minor components rather than expanding every leaf.
 """
 
 
@@ -121,6 +150,9 @@ RULES — CRITICAL:
 4. Do NOT reorganise, rename, or remove nodes that the user did not mention.
 5. If adding a new node, choose a node ID consistent with the existing naming convention.
 6. Exception: if the user explicitly says "start over", "redesign", "create a new diagram", or "from scratch", ignore rules 1-5 and generate a completely new diagram.
+7. While making the requested change, if you encounter existing edges that violate \
+the consolidation rules (same label repeated on N edges to the same destination), \
+consolidate them as part of the update. Do not propagate bad patterns.
 
 Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation."""
         else:
@@ -129,17 +161,26 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
 Conversation:
 {conversation}
 
+Constraints (enforce strictly before writing a single line of Mermaid syntax):
+1. Maximum 15-20 nodes. Merge minor components; prefer a readable overview to an exhaustive map.
+2. Cross-cutting concerns (logging, metrics, tracing) — omit entirely unless the conversation explicitly requests them.
+3. No duplicate edge labels. Each label may appear at most once per destination node.
+4. Edge labels only when the relationship is not obvious from node names alone.
+
 Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation."""
 
         system_prompt = self.system_prompt
         if file_context:
             system_prompt = self.system_prompt + "\n\n" + file_context
 
+        # "high" reasoning effort: more deterministic, enforces structural rules better.
+        # Disables temperature/topP (handled in bedrock_client.invoke_lite_thinking).
+        # max_tokens=4096 to accommodate the larger thinking budget.
         diagram_syntax = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=system_prompt,
-            max_tokens=2048,
-            reasoning_effort="medium",
+            max_tokens=4096,
+            reasoning_effort="high",
         )
 
         # Strip code fences if the model adds them anyway
