@@ -130,7 +130,7 @@ export function MermaidRenderer({
 
     // Fit with 85% padding so diagram doesn't touch edges
     const scale = Math.min(wrapperW / contentW, wrapperH / contentH) * 0.85;
-    const clampedScale = Math.max(0.1, Math.min(scale, 2));
+    const clampedScale = Math.max(0.1, scale);
 
     // Calculate translate to center the scaled content in the wrapper
     const x = (wrapperW - contentW * clampedScale) / 2;
@@ -194,7 +194,7 @@ export function MermaidRenderer({
         ref={transformRef}
         initialScale={0.5}
         minScale={0.1}
-        maxScale={5}
+        maxScale={50}
         centerOnInit={true}
         limitToBounds={false}
         wheel={{ step: 0.05, smoothStep: 0.01 }}
