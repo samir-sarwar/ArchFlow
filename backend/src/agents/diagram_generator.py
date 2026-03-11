@@ -16,9 +16,11 @@ Your role:
 Output rules:
 - Always output valid Mermaid.js syntax
 - Use descriptive node IDs (e.g., `api_gateway` not `A`)
-- HARD LIMIT: maximum 15-20 nodes total. If the architecture has more components, \
-group minor ones into a single representative node (e.g., `internal_services["Internal Services"]`). \
-Quality over completeness.
+- Scale node count to the complexity of the architecture described. \
+For simple systems (3-5 services), 5-8 nodes is right. \
+For complex multi-tier systems, 15-25+ nodes may be appropriate. \
+Group minor ancillary components rather than omitting them, \
+but never add nodes that the conversation did not mention.
 - Keep the diagram to what a reader can absorb in 10 seconds
 
 Layout rules (apply to all diagram types where applicable):
@@ -96,8 +98,8 @@ Uploaded file context:
 - When the prompt includes an "Uploaded file analysis" section, use it as the primary source for diagram content.
 - Map the file's components, data flows, and technologies into diagram nodes and connections.
 - Use the file's patterns (e.g., "microservices", "event-driven") to choose the appropriate diagram layout.
-- Include key components and data flows from the file analysis, but still respect the 15-20 node limit — \
-group minor components rather than expanding every leaf.
+- Include key components and data flows from the file analysis — \
+group ancillary or repeated leaf components rather than expanding every one individually.
 """
 
 
@@ -162,7 +164,8 @@ Conversation:
 {conversation}
 
 Constraints (enforce strictly before writing a single line of Mermaid syntax):
-1. Maximum 15-20 nodes. Merge minor components; prefer a readable overview to an exhaustive map.
+1. Scale node count to the architecture's complexity — group minor ancillary components \
+rather than listing every leaf, but do not invent nodes that were not discussed.
 2. Cross-cutting concerns (logging, metrics, tracing) — omit entirely unless the conversation explicitly requests them.
 3. No duplicate edge labels. Each label may appear at most once per destination node.
 4. Edge labels only when the relationship is not obvious from node names alone.
@@ -173,14 +176,14 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
         if file_context:
             system_prompt = self.system_prompt + "\n\n" + file_context
 
-        # "high" reasoning effort: more deterministic, enforces structural rules better.
-        # Disables temperature/topP (handled in bedrock_client.invoke_lite_thinking).
-        # max_tokens=4096 to accommodate the larger thinking budget.
+        # "medium" reasoning with a large token budget: best trade-off for diagram quality
+        # within the hard 29s API Gateway WebSocket integration timeout.
+        # ("high" reasoning disallows maxTokens and exceeds the 29s limit.)
         diagram_syntax = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=system_prompt,
-            max_tokens=4096,
-            reasoning_effort="high",
+            max_tokens=8192,
+            reasoning_effort="medium",
         )
 
         # Strip code fences if the model adds them anyway

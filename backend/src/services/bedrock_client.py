@@ -100,7 +100,7 @@ class BedrockClient:
         kwargs = {
             "modelId": model,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": max_tokens},
+            "inferenceConfig": {},
             "additionalModelRequestFields": {
                 "reasoningConfig": {
                     "type": "enabled",
@@ -109,8 +109,9 @@ class BedrockClient:
             },
         }
 
-        # temperature/topP cannot be used with "high" effort
+        # maxTokens, temperature, topP cannot be used with "high" effort
         if reasoning_effort != "high":
+            kwargs["inferenceConfig"]["maxTokens"] = max_tokens
             kwargs["inferenceConfig"]["topP"] = 0.9
             kwargs["inferenceConfig"]["temperature"] = 0.7
 
@@ -129,26 +130,21 @@ class BedrockClient:
                     if "text" in block:
                         return block["text"]
 
-                # Model spent entire token budget on reasoning with no output text.
-                # Check stopReason and log for diagnostics.
+                # Model spent entire token budget on reasoning with no text output.
+                # Retry without thinking mode — plain converse call usually succeeds
+                # when the reasoning budget was the bottleneck.
                 stop_reason = response.get("stopReason", "unknown")
                 logger.warning(
-                    "invoke_lite_thinking: no text block in response (stopReason=%s, blocks=%d). "
-                    "Retrying without thinking mode.",
+                    "invoke_lite_thinking: no text block (stopReason=%s, blocks=%d) — "
+                    "retrying without thinking mode",
                     stop_reason, len(content_blocks),
                 )
-
-                # Fallback: retry the same prompt without reasoning mode
-                fallback_kwargs = {
-                    "modelId": model,
-                    "messages": [{"role": "user", "content": [{"text": prompt}]}],
-                    "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
-                }
-                if system_prompt:
-                    fallback_kwargs["system"] = [{"text": system_prompt}]
-
-                fallback_response = self.client.converse(**fallback_kwargs)
-                return fallback_response["output"]["message"]["content"][0]["text"]
+                return await self.invoke_model(
+                    prompt,
+                    system_prompt=system_prompt,
+                    model_id=self.model_lite,
+                    max_tokens=4096,
+                )
             except Exception as e:
                 error_code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
                 is_retryable = error_code in retryable_error_codes or isinstance(

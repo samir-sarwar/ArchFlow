@@ -15,8 +15,11 @@ Classify the new user message as exactly one of:
 scalability review, or is asking evaluative questions about the current architecture \
 (e.g. "would this work for X users?", "what are the bottlenecks?", "how would we improve this?"). \
 Use this for any question that requires architectural reasoning, even if it references the current design.
-- "modify_diagram" - User wants to create, update, change, or generate a diagram (includes \
-requests like "show me", "draw", "diagram", "visualize", "add X to the diagram")
+- "modify_diagram" - User wants to create, update, change, or generate a diagram or architecture. \
+This includes requests like "show me", "draw", "diagram", "visualize", "add X to the diagram". \
+IMPORTANT: When a user asks to "create", "build", or "design" an architecture for a specific \
+system or use case, this is "modify_diagram" — they want a visual diagram, not just advice. \
+Only use "architecture_advice" for evaluative/analytical questions about an existing design.
 - "clarification_needed" - User's request is too vague to act on and needs more information
 - "analyze_context" - User is providing or referencing uploaded documents or files
 - "general" - Greetings, casual chat, simple recall of a prior fact (e.g. "what did we decide?", \
@@ -27,6 +30,9 @@ Examples:
 - "Can you create a diagram showing the microservices?" → "modify_diagram"
 - "Show me what this architecture looks like" → "modify_diagram"
 - "Add a load balancer to the diagram" → "modify_diagram"
+- "Create the backend architecture of a sports streaming website" → "modify_diagram"
+- "Build me a microservices architecture for an e-commerce platform" → "modify_diagram"
+- "Design the system architecture for a real-time chat app" → "modify_diagram"
 - "What are the trade-offs between SQL and NoSQL for this?" → "architecture_advice"
 - "How should I handle authentication?" → "architecture_advice"
 - "Would this handle a million concurrent users?" → "architecture_advice"
@@ -35,6 +41,8 @@ Examples:
 - "Hi there!" → "general"
 - "What did we decide about the database?" → "general"
 - "Thanks, that makes sense" → "general"
+- "What is the current diagram you made for?" → "general"
+- "What stack did we settle on?" → "general"
 - "I uploaded a requirements doc" → "analyze_context"
 - "I want to build a REST API" → "clarification_needed"
 
@@ -84,8 +92,8 @@ class OrchestratorAgent:
         response = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=INTENT_CLASSIFICATION_PROMPT,
-            max_tokens=256,
-            reasoning_effort="low",
+            max_tokens=512,
+            reasoning_effort="medium",
         )
 
         intent_str = response.strip().lower().strip('"')

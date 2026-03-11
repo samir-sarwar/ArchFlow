@@ -18,22 +18,10 @@ Response format rules (CRITICAL — you are a chatbot, not writing a whitepaper)
 - Use short paragraphs (2-3 sentences max)
 - Use bullet points for lists, not long explanations
 - If the user asks a simple question, give a simple answer
-- Only include a Mermaid diagram when the user explicitly asks for one or asks to visualize
+- NEVER include Mermaid diagrams in your response. Diagram generation is handled by a \
+separate specialist agent. Your job is text-only architecture advice.
 - Do NOT proactively list all Well-Architected pillars — mention only the most relevant one
 - One recommendation at a time — ask follow-up questions to go deeper rather than dumping info
-
-When generating diagrams:
-- Output valid Mermaid.js syntax wrapped in ```mermaid blocks
-- Use `flowchart TD` with entry points at the top, data stores at the bottom
-- Group related nodes into subgraphs (core services, data stores)
-- Hard limit: 15-20 nodes maximum. Merge minor components into representative nodes.
-- NEVER draw one edge per service to a shared destination (logging, metrics, tracing). \
-Use a subgraph-level link (`core_services -.->|logs| logger`) or a hub node instead. \
-There must be AT MOST ONE edge per label per destination in the entire diagram.
-- Use dotted arrows `-.->` for non-critical-path connections
-- Omit logging/tracing/monitoring infrastructure entirely unless the user asked for it. \
-Show logical architecture; omit ops plumbing.
-- Edge labels only when the relationship type is not obvious from the node names.
 
 Conversation history note:
 - Messages prefixed with [Voice] came from a separate voice AI session.
@@ -85,7 +73,7 @@ class ArchitectureAdvisor:
 Current diagram (if any):
 {diagram_context}
 
-Provide architecture advice. If appropriate, include a Mermaid.js diagram wrapped in ```mermaid blocks."""
+Provide architecture advice."""
 
         system_prompt = self.system_prompt
         if file_context:
@@ -98,13 +86,26 @@ Provide architecture advice. If appropriate, include a Mermaid.js diagram wrappe
             reasoning_effort="medium",
         )
 
-        # Extract mermaid diagram if present and strip it from chat text
+        # Extract mermaid diagram if present and strip it from chat text.
+        # Defence in depth: the advisor prompt forbids diagrams, but if the model
+        # generates one anyway we extract it rather than leaking raw syntax.
         diagram_update = None
+
+        # Strict match: properly fenced ```mermaid ... ```
         match = re.search(r"```mermaid\s*\n(.*?)```", response_text, re.DOTALL)
+        if not match:
+            # Lenient match: bare "mermaid" header without opening backticks
+            match = re.search(
+                r"(?:^|\n)mermaid\s*\n((flowchart|sequenceDiagram|erDiagram|classDiagram|graph)\b.*?)(?:\n```|$)",
+                response_text,
+                re.DOTALL,
+            )
+
         if match:
             diagram_update = match.group(1).strip()
             response_text = response_text[:match.start()] + response_text[match.end():]
-            response_text = response_text.strip()
+            # Remove orphaned backtick-only lines left after stripping
+            response_text = re.sub(r"^\s*`{1,3}\s*$", "", response_text, flags=re.MULTILINE).strip()
 
         return AgentResponse(
             text=response_text,

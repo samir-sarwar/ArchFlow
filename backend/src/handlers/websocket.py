@@ -12,7 +12,7 @@ from src.agents import (
     OrchestratorAgent,
     RequirementsAnalyst,
 )
-from src.models import Message
+from src.models import ConversationContext, Message
 from src.services.bedrock_client import BedrockClient
 from src.services.diagram_validator import validate_mermaid_syntax
 from src.services.state_manager import ConversationStateManager
@@ -241,7 +241,9 @@ async def _process_message(
         context = await state_manager.get_session(session_id)
     else:
         session_id = await state_manager.create_session()
-        context = await state_manager.get_session(session_id)
+        # Construct context directly instead of reading back from DynamoDB
+        # to avoid eventually-consistent read missing the just-written item.
+        context = ConversationContext(session_id=session_id)
 
     # Only use the frontend's diagram if the backend has none (fresh session).
     # Otherwise trust DynamoDB state — it may contain a voice AI diagram that
