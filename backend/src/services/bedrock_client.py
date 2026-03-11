@@ -128,7 +128,27 @@ class BedrockClient:
                 for block in content_blocks:
                     if "text" in block:
                         return block["text"]
-                return ""
+
+                # Model spent entire token budget on reasoning with no output text.
+                # Check stopReason and log for diagnostics.
+                stop_reason = response.get("stopReason", "unknown")
+                logger.warning(
+                    "invoke_lite_thinking: no text block in response (stopReason=%s, blocks=%d). "
+                    "Retrying without thinking mode.",
+                    stop_reason, len(content_blocks),
+                )
+
+                # Fallback: retry the same prompt without reasoning mode
+                fallback_kwargs = {
+                    "modelId": model,
+                    "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                    "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
+                }
+                if system_prompt:
+                    fallback_kwargs["system"] = [{"text": system_prompt}]
+
+                fallback_response = self.client.converse(**fallback_kwargs)
+                return fallback_response["output"]["message"]["content"][0]["text"]
             except Exception as e:
                 error_code = getattr(e, "response", {}).get("Error", {}).get("Code", "")
                 is_retryable = error_code in retryable_error_codes or isinstance(

@@ -94,15 +94,17 @@ Provide architecture advice. If appropriate, include a Mermaid.js diagram wrappe
         response_text = await self.bedrock.invoke_lite_thinking(
             prompt=prompt,
             system_prompt=system_prompt,
-            max_tokens=2048,
+            max_tokens=4096,
             reasoning_effort="medium",
         )
 
-        # Extract mermaid diagram if present
+        # Extract mermaid diagram if present and strip it from chat text
         diagram_update = None
         match = re.search(r"```mermaid\s*\n(.*?)```", response_text, re.DOTALL)
         if match:
             diagram_update = match.group(1).strip()
+            response_text = response_text[:match.start()] + response_text[match.end():]
+            response_text = response_text.strip()
 
         return AgentResponse(
             text=response_text,

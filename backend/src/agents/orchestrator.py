@@ -11,18 +11,17 @@ INTENT_CLASSIFICATION_PROMPT = """You are an intent classifier for an architectu
 You will be given recent conversation history followed by a new user message to classify.
 
 Classify the new user message as exactly one of:
-- "architecture_advice" - User wants NEW design guidance, best practices, or trade-off analysis \
-not already covered. Do NOT use this for recall questions about prior decisions.
+- "architecture_advice" - User wants design guidance, best practices, trade-off analysis, \
+scalability review, or is asking evaluative questions about the current architecture \
+(e.g. "would this work for X users?", "what are the bottlenecks?", "how would we improve this?"). \
+Use this for any question that requires architectural reasoning, even if it references the current design.
 - "modify_diagram" - User wants to create, update, change, or generate a diagram (includes \
 requests like "show me", "draw", "diagram", "visualize", "add X to the diagram")
 - "clarification_needed" - User's request is too vague to act on and needs more information
 - "analyze_context" - User is providing or referencing uploaded documents or files
-- "general" - Greetings, casual chat, OR questions asking about something already established \
-in the conversation (e.g. "what did we decide?", "what port did we choose?", "remind me of \
-the stack we picked"). Use this when the answer is already in the conversation history.
-
-IMPORTANT: If the user's question can be answered from the recent conversation above \
-(it is recalling or confirming something already discussed), classify as "general".
+- "general" - Greetings, casual chat, simple recall of a prior fact (e.g. "what did we decide?", \
+"remind me of the stack we picked"), or thanks/acknowledgements. Do NOT use this for questions \
+that require reasoning about architecture, scalability, trade-offs, or improvements.
 
 Examples:
 - "Can you create a diagram showing the microservices?" → "modify_diagram"
@@ -30,6 +29,9 @@ Examples:
 - "Add a load balancer to the diagram" → "modify_diagram"
 - "What are the trade-offs between SQL and NoSQL for this?" → "architecture_advice"
 - "How should I handle authentication?" → "architecture_advice"
+- "Would this handle a million concurrent users?" → "architecture_advice"
+- "What are the bottlenecks in this design?" → "architecture_advice"
+- "How would we change this for higher availability?" → "architecture_advice"
 - "Hi there!" → "general"
 - "What did we decide about the database?" → "general"
 - "Thanks, that makes sense" → "general"

@@ -132,11 +132,20 @@ def _handle_text_message(body, connection_id, session_id):
     finally:
         loop.close()
 
+    # Guard against empty responses (e.g. model spent tokens on reasoning only)
+    response_text = response["text"]
+    if not response_text or not response_text.strip():
+        logger.warning("Empty response from agent=%s, sending fallback", response["agent"])
+        response_text = (
+            "I considered your question but wasn't able to formulate a complete response. "
+            "Could you rephrase or break it down so I can give you better guidance?"
+        )
+
     response_payload = {
         "type": "ai_response",
         "sessionId": response["session_id"],
         "payload": {
-            "text": response["text"],
+            "text": response_text,
             "agent": response["agent"],
         },
     }
