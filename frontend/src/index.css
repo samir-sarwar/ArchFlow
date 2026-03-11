@@ -109,6 +109,41 @@ html.dark .diagram-grid {
     linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
 }
 
+/* Mermaid syntax highlighting tokens */
+.mermaid-keyword { color: #8b5cf6; font-weight: 600; }
+.mermaid-arrow   { color: #f59e0b; }
+.mermaid-string  { color: #10b981; }
+.mermaid-comment { color: #6b7280; font-style: italic; }
+.mermaid-bracket { color: #3b82f6; }
+
+html.dark .mermaid-keyword { color: #a78bfa; }
+html.dark .mermaid-arrow   { color: #fbbf24; }
+html.dark .mermaid-string  { color: #34d399; }
+html.dark .mermaid-comment { color: #9ca3af; }
+html.dark .mermaid-bracket { color: #60a5fa; }
+
+/* Syntax highlight overlay: textarea + pre share identical metrics */
+.code-editor-shared {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  tab-size: 2;
+  letter-spacing: 0;
+  word-spacing: normal;
+  white-space: pre;
+  overflow-wrap: normal;
+  padding: 1rem;
+  margin: 0;
+}
+
+/* Keep selection visible on transparent-text textarea */
+.code-editor-overlay::selection {
+  background: rgba(139, 92, 246, 0.25);
+}
+.code-editor-overlay::-moz-selection {
+  background: rgba(139, 92, 246, 0.25);
+}
+
 /* Mermaid diagram SVG sizing */
 .diagram-container {
   /* line-height handled by svg { display: block } below */

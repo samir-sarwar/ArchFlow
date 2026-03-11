@@ -37,7 +37,7 @@ export function DiagramCanvas() {
       <div className={activeView === 'preview' ? 'block w-full h-full' : 'hidden'}>
         <MermaidRenderer syntax={currentSyntax} onAskToFix={handleAskToFix} />
       </div>
-      <div className={activeView === 'code' ? 'block w-full h-full' : 'hidden'}>
+      <div className={activeView === 'code' ? 'block w-full h-full diagram-grid' : 'hidden'}>
         <MermaidCodeEditor />
       </div>
     </div>
