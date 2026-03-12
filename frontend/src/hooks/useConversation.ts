@@ -276,12 +276,34 @@ export function useConversation() {
     conversationStore.addMessage(userMsg);
 
     const currentDiagram = useDiagramStore.getState().currentSyntax;
-    const sent = wsSend({
-      action: 'message',
-      sessionId: conversationStore.sessionId,
-      text: content,
-      currentDiagram: currentDiagram || undefined,
-    });
+
+    // Route through Sonic (voice WS) when available — much faster + better quality.
+    // Falls back to Lambda WS (Nova Lite) if voice server is not connected.
+    // Voice server generates a sessionId if none exists yet.
+    const useVoiceWs = isVoiceConnected && VOICE_WS_URL !== WS_URL;
+
+    let sent = false;
+    if (useVoiceWs) {
+      sent = voiceWsSend({
+        event: {
+          text_message: {
+            sessionId: conversationStore.sessionId,
+            text: content,
+            currentDiagram: currentDiagram || undefined,
+          },
+        },
+      });
+    }
+
+    // Fallback to Lambda if voice WS send failed or not available
+    if (!sent) {
+      sent = wsSend({
+        action: 'message',
+        sessionId: conversationStore.sessionId,
+        text: content,
+        currentDiagram: currentDiagram || undefined,
+      });
+    }
 
     if (!sent) {
       setError('Not connected to the server. Reconnecting...');

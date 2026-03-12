@@ -52,8 +52,8 @@ class VoiceSessionDBClient:
             )
             return []
 
-    def append_voice_interaction(self, session_id: str, user_text: str, ai_text: str) -> None:
-        """Append a voice interaction (user transcript + AI response) to DynamoDB."""
+    def append_voice_interaction(self, session_id: str, user_text: str, ai_text: str, is_voice: bool = True) -> None:
+        """Append a voice/text interaction (user transcript + AI response) to DynamoDB."""
         if not user_text and not ai_text:
             return  # Nothing to save
 
@@ -61,21 +61,25 @@ class VoiceSessionDBClient:
         messages_to_add = []
 
         if user_text:
-            messages_to_add.append({
+            msg = {
                 "role": "user",
                 "content": user_text,
                 "timestamp": now,
-                "isVoice": True,
-            })
+            }
+            if is_voice:
+                msg["isVoice"] = True
+            messages_to_add.append(msg)
 
         if ai_text:
-            messages_to_add.append({
+            msg = {
                 "role": "assistant",
                 "content": ai_text,
                 "timestamp": now,
-                "agent": "voice_assistant", # Mark it as coming from voice
-                "isVoice": True,
-            })
+                "agent": "voice_assistant" if is_voice else "sonic_text",
+            }
+            if is_voice:
+                msg["isVoice"] = True
+            messages_to_add.append(msg)
             
         if not messages_to_add:
             return

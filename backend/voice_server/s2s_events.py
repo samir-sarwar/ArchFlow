@@ -164,6 +164,22 @@ class S2sEvent:
         }
 
     @staticmethod
+    def content_start_user_text(prompt_name, content_name):
+        """contentStart for a user TEXT message (cross-modal input)."""
+        return {
+            "event": {
+                "contentStart": {
+                    "promptName": prompt_name,
+                    "contentName": content_name,
+                    "type": "TEXT",
+                    "interactive": True,
+                    "role": "USER",
+                    "textInputConfiguration": {"mediaType": "text/plain"},
+                }
+            }
+        }
+
+    @staticmethod
     def audio_input(prompt_name, content_name, content):
         return {
             "event": {
