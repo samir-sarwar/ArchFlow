@@ -25,6 +25,7 @@ import websockets
 
 from .session_manager import S2sSessionManager
 from .db_client import VoiceSessionDBClient
+from .text_triage import classify_text_complexity, handle_text_via_lite
 
 warnings.filterwarnings("ignore")
 
@@ -589,7 +590,7 @@ async def _websocket_handler(websocket):
                 event_type = list(data["event"].keys())[0]
                 logger.debug("Received event: %s", event_type)
 
-                # ── text_message: text chat routed through Sonic ──
+                # ── text_message: triage via Nova Lite, then route ──
                 if event_type == "text_message":
                     tm = data["event"]["text_message"]
                     tm_text = tm.get("text", "")
@@ -600,9 +601,26 @@ async def _websocket_handler(websocket):
                             "text_message received (%d chars, session=%s)",
                             len(tm_text), tm_session,
                         )
-                        # Run in a separate task so it doesn't block voice events
+
+                        async def _triage_and_handle(
+                            ws, text, sid, diagram, rgn, db,
+                        ):
+                            complexity = await classify_text_complexity(
+                                text, sid, rgn, db,
+                            )
+                            if complexity == "lite":
+                                await handle_text_via_lite(
+                                    ws, text, sid, diagram, rgn, db,
+                                    _build_history_summary,
+                                    _build_file_context_summary,
+                                )
+                            else:
+                                await _handle_text_via_sonic(
+                                    ws, text, sid, diagram, rgn, db,
+                                )
+
                         asyncio.create_task(
-                            _handle_text_via_sonic(
+                            _triage_and_handle(
                                 websocket, tm_text, tm_session,
                                 tm_diagram, region, db_client,
                             )
