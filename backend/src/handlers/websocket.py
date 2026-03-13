@@ -15,6 +15,8 @@ from src.agents import (
 from src.models import ConversationContext, Message
 from src.services.bedrock_client import BedrockClient
 from src.services.diagram_validator import validate_mermaid_syntax
+from src.services.github_fetcher import fetch_repo_context
+from src.services.repo_analyzer import analyze_repo
 from src.services.state_manager import ConversationStateManager
 from src.utils import SessionExpiredError, SessionNotFoundError, logger
 
@@ -103,6 +105,9 @@ def handle_message(event, connection_id):
 
     if action == "file_uploaded":
         return _handle_file_uploaded(body, connection_id, session_id)
+
+    if action == "github_repo":
+        return _handle_github_repo(body, connection_id, session_id)
 
     # Default: text chat message
     return _handle_text_message(body, connection_id, session_id)
@@ -374,6 +379,128 @@ async def _process_uploaded_file(session_id, file_key, file_name, content_type):
             )
 
     return {"analysis": analysis, "summary": summary, "diagram": diagram}
+
+
+def _handle_github_repo(body, connection_id, session_id):
+    """Handle a GitHub repository URL — fetch context and analyze."""
+    repo_url = body.get("repoUrl", "").strip()
+
+    if not repo_url:
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "No repository URL provided."},
+        })}
+
+    if not session_id:
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "No sessionId provided."},
+        })}
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(
+            _process_github_repo(session_id, repo_url)
+        )
+    except Exception:
+        logger.error("GitHub repo processing failed", exc_info=True)
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Failed to analyze the GitHub repository. Please try again."},
+        })}
+    finally:
+        loop.close()
+
+    if result.get("error"):
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": result["error"]},
+        })}
+
+    return {"statusCode": 200, "body": json.dumps({
+        "type": "repo_analysis",
+        "sessionId": session_id,
+        "payload": {
+            "repoUrl": repo_url,
+            "repoName": result.get("repo_name", ""),
+            "summary": result.get("summary", ""),
+            "analysis": result.get("analysis", {}),
+        },
+    })}
+
+
+async def _process_github_repo(session_id: str, repo_url: str) -> dict:
+    """Fetch GitHub repo context and analyze it with Nova Lite."""
+    # Check if this repo was already analyzed in this session (cache hit)
+    try:
+        context = await state_manager.get_session(session_id)
+    except (SessionNotFoundError, SessionExpiredError):
+        await state_manager.create_session(session_id=session_id)
+        context = await state_manager.get_session(session_id)
+
+    # Check for cached analysis
+    from src.services.github_fetcher import parse_github_url
+    parsed = parse_github_url(repo_url)
+    if parsed:
+        cache_key = f"github://{parsed['owner']}/{parsed['repo']}"
+        for f in context.uploaded_files:
+            if f.get("file_key") == cache_key:
+                logger.info("GitHub repo already analyzed in this session: %s", cache_key)
+                analysis = f.get("file_analysis", {})
+                summary = analysis.get("summary", "Already analyzed.") if isinstance(analysis, dict) else str(analysis)[:500]
+                return {
+                    "repo_name": f"{parsed['owner']}/{parsed['repo']}",
+                    "summary": summary,
+                    "analysis": analysis,
+                }
+
+    # Fetch repo context
+    repo_data = fetch_repo_context(repo_url)
+    if repo_data.get("error"):
+        return {"error": repo_data["error"]}
+
+    assembled_text = repo_data.get("assembled_text", "")
+    if not assembled_text:
+        return {"error": "Could not extract content from the repository."}
+
+    owner = repo_data["owner"]
+    repo = repo_data["repo"]
+    repo_name = f"{owner}/{repo}"
+
+    # Analyze with Nova Lite
+    analysis = await analyze_repo(assembled_text, bedrock)
+
+    if isinstance(analysis, dict):
+        summary = analysis.get("summary", "Repository analyzed successfully.")
+    else:
+        summary = str(analysis)[:500]
+
+    # Store in uploaded_files (same schema as file uploads)
+    file_metadata = {
+        "file_key": f"github://{owner}/{repo}",
+        "file_name": f"{repo_name} (GitHub)",
+        "content_type": "application/x-github-repo",
+        "status": "ready",
+        "analysis_summary": summary,
+        "file_analysis": analysis if isinstance(analysis, dict) else {"summary": summary},
+    }
+
+    uploaded_files = context.uploaded_files + [file_metadata]
+    await state_manager.update_session(session_id, {"uploaded_files": uploaded_files})
+
+    # Save a system message about the analysis
+    system_msg = Message(
+        role="assistant",
+        content=f"[Repository analyzed: {repo_name}] {summary}",
+        agent="context_analyzer",
+    )
+    await state_manager.add_message(session_id, system_msg)
+
+    return {
+        "repo_name": repo_name,
+        "summary": summary,
+        "analysis": analysis,
+    }
 
 
 def _send_to_client(connection_id: str, payload: dict) -> None:
