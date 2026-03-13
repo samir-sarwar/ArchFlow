@@ -218,6 +218,26 @@ export function useConversation() {
         setLoading(false);
       }
 
+      if (data.type === 'repo_analysis') {
+        const p = data.payload as {
+          repoUrl?: string;
+          repoName?: string;
+          summary?: string;
+        };
+        const analysisMsg: Message = {
+          role: 'assistant',
+          content: `**Repository analyzed: ${p.repoName || 'repo'}**\n\n${p.summary || 'Analysis complete. You can now ask questions about this repository or request architecture diagrams based on it.'}`,
+          timestamp: new Date().toISOString(),
+          agent: 'context_analyzer',
+        };
+        conversationStore.addMessage(analysisMsg);
+        if (data.sessionId) {
+          conversationStore.setSessionId(data.sessionId as string);
+        }
+        clearTimeout(responseTimeoutRef.current);
+        setLoading(false);
+      }
+
       if (data.type === 'diagram_update') {
         const p = data.payload as { diagram?: string };
         if (p?.diagram) {
@@ -265,8 +285,45 @@ export function useConversation() {
   // to avoid React state batching dropping rapid audio_chunk messages.
 
   // ── Text message ──
+  const GITHUB_PREFIX_RE = /^@github:\s*/i;
+  const GITHUB_URL_RE = /https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+/;
+
   const sendMessage = (content: string) => {
     if (!content.trim()) return;
+
+    // Detect @github:<url> explicit trigger — route to github_repo action
+    const prefixMatch = content.match(GITHUB_PREFIX_RE);
+    if (prefixMatch) {
+      const repoUrl = content.slice(prefixMatch[0].length).trim();
+      if (repoUrl && GITHUB_URL_RE.test(repoUrl)) {
+        const userMsg: Message = {
+          role: 'user',
+          content: `Analyzing GitHub repository: ${repoUrl}`,
+          timestamp: new Date().toISOString(),
+        };
+        conversationStore.addMessage(userMsg);
+
+        const sent = wsSend({
+          action: 'github_repo',
+          sessionId: conversationStore.sessionId,
+          repoUrl,
+        });
+
+        if (!sent) {
+          setError('Not connected to the server. Reconnecting...');
+          return;
+        }
+
+        setLoading(true);
+        setError(null);
+        clearTimeout(responseTimeoutRef.current);
+        responseTimeoutRef.current = setTimeout(() => {
+          setLoading(false);
+          setError('Repository analysis timed out. Please try again.');
+        }, 60_000);
+        return;
+      }
+    }
 
     const userMsg: Message = {
       role: 'user',
