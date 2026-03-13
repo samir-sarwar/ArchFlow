@@ -26,6 +26,7 @@ import websockets
 from .session_manager import S2sSessionManager
 from .db_client import VoiceSessionDBClient
 from .text_triage import classify_text_complexity, handle_text_via_lite
+from .github_context import maybe_fetch_github_context
 
 warnings.filterwarnings("ignore")
 
@@ -605,6 +606,9 @@ async def _websocket_handler(websocket):
                         async def _triage_and_handle(
                             ws, text, sid, diagram, rgn, db,
                         ):
+                            # Detect and fetch GitHub repo context before triage
+                            await maybe_fetch_github_context(text, sid, rgn, db)
+
                             complexity = await classify_text_complexity(
                                 text, sid, rgn, db,
                             )
