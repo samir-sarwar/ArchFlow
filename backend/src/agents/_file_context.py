@@ -22,10 +22,30 @@ def build_file_context_block(uploaded_files: list[dict], max_chars: int = 10000)
         if isinstance(analysis, dict):
             if analysis.get("summary"):
                 parts.append(f"Summary: {analysis['summary']}")
-            for key in ("components", "patterns", "technologies", "data_flows"):
+            if analysis.get("architecture_style"):
+                parts.append(f"Architecture style: {analysis['architecture_style']}")
+            for key in ("components", "patterns", "technologies", "external_services", "infrastructure"):
                 items = analysis.get(key, [])
                 if items and isinstance(items, list):
                     parts.append(f"{key.replace('_', ' ').title()}: {', '.join(str(i) for i in items)}")
+            # Format data_flows as structured relationships for diagram generation
+            data_flows = analysis.get("data_flows", [])
+            if data_flows and isinstance(data_flows, list):
+                flow_lines = []
+                for flow in data_flows:
+                    if isinstance(flow, dict):
+                        src = flow.get("source", "?")
+                        tgt = flow.get("target", "?")
+                        proto = flow.get("protocol", "")
+                        desc = flow.get("description", "")
+                        label = f" ({proto})" if proto else ""
+                        flow_lines.append(f"  {src} → {tgt}{label}: {desc}" if desc else f"  {src} → {tgt}{label}")
+                    else:
+                        flow_lines.append(f"  {flow}")
+                if flow_lines:
+                    parts.append("Data flows:\n" + "\n".join(flow_lines))
+            if analysis.get("repo_structure_summary"):
+                parts.append(f"Structure: {analysis['repo_structure_summary']}")
             reqs = analysis.get("requirements")
             if isinstance(reqs, dict):
                 for rtype in ("functional", "non_functional"):

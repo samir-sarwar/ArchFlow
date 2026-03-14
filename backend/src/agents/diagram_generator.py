@@ -158,11 +158,21 @@ consolidate them as part of the update. Do not propagate bad patterns.
 
 Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include any explanation."""
         else:
+            file_context_hint = ""
+            if file_context:
+                file_context_hint = """
+IMPORTANT — Uploaded file analysis is available in the system prompt. It is the PRIMARY source for this diagram.
+- Use the specific component names, technologies, and service names from the analysis as node labels.
+- Map each data_flow entry (source → target) directly to a diagram edge.
+- Use the architecture_style to choose the best diagram layout.
+- Include external_services as distinct nodes connected to the components that use them.
+- Do NOT fall back to generic names (e.g., "Database", "API Gateway") when the analysis provides specific ones (e.g., "MongoDB Atlas", "Next.js App Router").
+"""
             prompt = f"""Based on this architecture conversation, generate a new Mermaid.js diagram.
 
 Conversation:
 {conversation}
-
+{file_context_hint}
 Constraints (enforce strictly before writing a single line of Mermaid syntax):
 1. Scale node count to the architecture's complexity — group minor ancillary components \
 rather than listing every leaf, but do not invent nodes that were not discussed.

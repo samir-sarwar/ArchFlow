@@ -103,6 +103,7 @@ Resources:
       Environment:
         Variables:
           WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+          REPO_ANALYZER_FUNCTION_NAME: !Ref RepoAnalyzerFunction
       Policies:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
@@ -114,6 +115,11 @@ Resources:
               Action:
                 - execute-api:ManageConnections
               Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+        - Statement:
+            - Effect: Allow
+              Action:
+                - lambda:InvokeFunction
+              Resource: !GetAtt RepoAnalyzerFunction.Arn
 
   WebSocketFunctionPermission:
     Type: AWS::Lambda::Permission
@@ -122,6 +128,19 @@ Resources:
       FunctionName: !Ref WebSocketFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
+
+  RepoAnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-repo-analyzer-${Environment}
+      Handler: src.handlers.repo_analyzer_handler.lambda_handler
+      CodeUri: .
+      MemorySize: 1024
+      Timeout: 300
+      Policies:
+        - AmazonBedrockFullAccess
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
 
   FileUploadFunction:
     Type: AWS::Serverless::Function

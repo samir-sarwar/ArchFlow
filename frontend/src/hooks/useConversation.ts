@@ -20,6 +20,7 @@ export function useConversation() {
   const { setLoading, setError } = useUIStore();
   const chunkPlayerRef = useRef<AudioChunkPlayer | null>(null);
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout>>();
+  const repoPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Ref to hold handleIncomingMessage so the voice WS callback always uses the latest version
   const handleIncomingRef = useRef<(data: Record<string, unknown>) => void>(() => { });
 
@@ -42,11 +43,15 @@ export function useConversation() {
     sendMessage: voiceWsSend,
   } = useWebSocket(VOICE_WS_URL, voiceOnMessage);
 
-  // Cleanup audio player on unmount
+  // Cleanup audio player and polling on unmount
   useEffect(() => {
     return () => {
       chunkPlayerRef.current?.stop();
       clearTimeout(responseTimeoutRef.current);
+      if (repoPollingRef.current) {
+        clearInterval(repoPollingRef.current);
+        repoPollingRef.current = null;
+      }
     };
   }, []);
 
@@ -77,6 +82,31 @@ export function useConversation() {
       setLoading(true);
     }
   }, [isConnected]);
+
+  // ── Repo analysis polling ──
+  const startRepoPolling = (repoUrl: string) => {
+    // Clear any existing polling
+    if (repoPollingRef.current) {
+      clearInterval(repoPollingRef.current);
+    }
+    let attempts = 0;
+    const maxAttempts = 30; // ~90 seconds at 3s intervals
+    repoPollingRef.current = setInterval(() => {
+      attempts += 1;
+      if (attempts > maxAttempts) {
+        clearInterval(repoPollingRef.current!);
+        repoPollingRef.current = null;
+        setLoading(false);
+        setError('Repository analysis timed out. Please try again.');
+        return;
+      }
+      wsSend({
+        action: 'check_repo_status',
+        sessionId: conversationStore.sessionId || '',
+        repoUrl,
+      });
+    }, 3000);
+  };
 
   // ── Handler shared by both sockets ──
   // Keep ref in sync so the voice WS direct callback always uses the latest closure
@@ -234,9 +264,33 @@ export function useConversation() {
         if (data.sessionId) {
           conversationStore.setSessionId(data.sessionId as string);
         }
+        // Stop polling if active
+        if (repoPollingRef.current) {
+          clearInterval(repoPollingRef.current);
+          repoPollingRef.current = null;
+        }
         clearTimeout(responseTimeoutRef.current);
         setLoading(false);
       }
+
+      if (data.type === 'repo_analysis_started') {
+        const p = data.payload as { repoUrl?: string; repoName?: string };
+        const analysisMsg: Message = {
+          role: 'assistant',
+          content: `Analyzing repository: **${p.repoName || p.repoUrl}**... This may take a moment.`,
+          timestamp: new Date().toISOString(),
+          agent: 'context_analyzer',
+        };
+        conversationStore.addMessage(analysisMsg);
+        if (data.sessionId) {
+          conversationStore.setSessionId(data.sessionId as string);
+        }
+        // Start polling for results
+        startRepoPolling(p.repoUrl || '');
+      }
+
+      // repo_analysis_pending — no-op, keep polling
+
 
       if (data.type === 'diagram_update') {
         const p = data.payload as { diagram?: string };
@@ -246,6 +300,11 @@ export function useConversation() {
       }
 
       if (data.type === 'error') {
+        // Stop repo polling on error
+        if (repoPollingRef.current) {
+          clearInterval(repoPollingRef.current);
+          repoPollingRef.current = null;
+        }
         console.error('[ArchFlow] Backend error:', data.payload);
         clearTimeout(responseTimeoutRef.current);
         conversationStore.setVoiceStatus(null);
@@ -285,17 +344,16 @@ export function useConversation() {
   // to avoid React state batching dropping rapid audio_chunk messages.
 
   // ── Text message ──
-  const GITHUB_PREFIX_RE = /^@github:\s*/i;
-  const GITHUB_URL_RE = /https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+/;
+  const GITHUB_MENTION_RE = /@github:\s*(https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+)/i;
 
   const sendMessage = (content: string) => {
     if (!content.trim()) return;
 
-    // Detect @github:<url> explicit trigger — route to github_repo action
-    const prefixMatch = content.match(GITHUB_PREFIX_RE);
-    if (prefixMatch) {
-      const repoUrl = content.slice(prefixMatch[0].length).trim();
-      if (repoUrl && GITHUB_URL_RE.test(repoUrl)) {
+    // Detect @github:<url> anywhere in the message — route to github_repo action
+    const mentionMatch = content.match(GITHUB_MENTION_RE);
+    if (mentionMatch) {
+      const repoUrl = mentionMatch[1].replace(/[\x00-\x1F\x7F]/g, '').trim();
+      if (repoUrl) {
         const userMsg: Message = {
           role: 'user',
           content: `Analyzing GitHub repository: ${repoUrl}`,
@@ -305,7 +363,7 @@ export function useConversation() {
 
         const sent = wsSend({
           action: 'github_repo',
-          sessionId: conversationStore.sessionId,
+          sessionId: conversationStore.sessionId || '',
           repoUrl,
         });
 
@@ -316,11 +374,6 @@ export function useConversation() {
 
         setLoading(true);
         setError(null);
-        clearTimeout(responseTimeoutRef.current);
-        responseTimeoutRef.current = setTimeout(() => {
-          setLoading(false);
-          setError('Repository analysis timed out. Please try again.');
-        }, 60_000);
         return;
       }
     }
@@ -336,7 +389,6 @@ export function useConversation() {
 
     // Route through Sonic (voice WS) when available — much faster + better quality.
     // Falls back to Lambda WS (Nova Lite) if voice server is not connected.
-    // Voice server generates a sessionId if none exists yet.
     const useVoiceWs = isVoiceConnected && VOICE_WS_URL !== WS_URL;
 
     let sent = false;

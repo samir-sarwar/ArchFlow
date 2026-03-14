@@ -4,7 +4,8 @@ import { useUIStore } from '@/stores/uiStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { Mic, Plus, Send, MessageSquare, Github } from 'lucide-react';
 
-const GITHUB_PREFIX_RE = /^@github:\s*/i;
+// Matches @github: followed by a URL (or partial text) anywhere in the input
+const GITHUB_MENTION_RE = /@github:\s*\S*/i;
 
 interface InputBarProps {
   uploadFile: (file: File) => void;
@@ -16,7 +17,8 @@ export function InputBar({ uploadFile }: InputBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const hasGithubPrefix = useMemo(() => GITHUB_PREFIX_RE.test(input), [input]);
+  const githubMatch = useMemo(() => GITHUB_MENTION_RE.exec(input), [input]);
+  const hasGithubMention = !!githubMatch;
   const { sendMessage, isConnected } = useConversation();
   const isLoading = useUIStore((s) => s.isLoading);
   const chatOverlayOpen = useUIStore((s) => s.chatOverlayOpen);
@@ -89,18 +91,21 @@ export function InputBar({ uploadFile }: InputBarProps) {
       >
         {/* Text input with @github: highlight overlay */}
         <div className="relative w-full">
-          {/* Highlight overlay — renders colored @github: prefix behind the transparent textarea */}
-          {hasGithubPrefix && (
+          {/* Highlight overlay — renders colored @github: mention behind the transparent textarea */}
+          {hasGithubMention && (
             <div
               ref={highlightRef}
               aria-hidden
               className="absolute inset-0 pointer-events-none px-4 pt-3 pb-1 text-sm leading-5 whitespace-pre-wrap break-words overflow-hidden"
             >
-              <span className="text-purple-500 dark:text-purple-400 font-semibold">
-                {input.match(GITHUB_PREFIX_RE)?.[0]}
+              <span className="text-gray-900 dark:text-white/90">
+                {input.slice(0, githubMatch!.index)}
               </span>
-              <span className="text-transparent">
-                {input.replace(GITHUB_PREFIX_RE, '')}
+              <span className="text-purple-500 dark:text-purple-400">
+                {githubMatch![0]}
+              </span>
+              <span className="text-gray-900 dark:text-white/90">
+                {input.slice(githubMatch!.index + githubMatch![0].length)}
               </span>
             </div>
           )}
@@ -117,14 +122,13 @@ export function InputBar({ uploadFile }: InputBarProps) {
             }
             disabled={!isConnected}
             rows={1}
-            className={`w-full bg-transparent text-sm placeholder:text-gray-400 dark:placeholder:text-white/30 focus:outline-none disabled:opacity-50 resize-none max-h-40 px-4 pt-3 pb-1 leading-5 ${
-              hasGithubPrefix
+            className={`w-full bg-transparent text-sm placeholder:text-gray-400 dark:placeholder:text-white/30 focus:outline-none disabled:opacity-50 resize-none max-h-40 px-4 pt-3 pb-1 leading-5 ${hasGithubMention
                 ? 'text-transparent caret-gray-900 dark:caret-white'
                 : 'text-gray-900 dark:text-white/90'
-            }`}
+              }`}
           />
           {/* GitHub indicator icon */}
-          {hasGithubPrefix && (
+          {hasGithubMention && (
             <div className="absolute right-3 top-3 text-purple-500 dark:text-purple-400">
               <Github className="w-4 h-4" />
             </div>
@@ -140,8 +144,8 @@ export function InputBar({ uploadFile }: InputBarProps) {
               type="button"
               onClick={toggleChatOverlay}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all whitespace-nowrap ${chatOverlayOpen
-                  ? 'bg-primary-100 text-primary-600 border border-primary-200 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/30'
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/50 dark:hover:text-white/70 dark:hover:bg-white/5'
+                ? 'bg-primary-100 text-primary-600 border border-primary-200 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/30'
+                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/50 dark:hover:text-white/70 dark:hover:bg-white/5'
                 }`}
               title="Toggle chat"
             >
@@ -176,8 +180,8 @@ export function InputBar({ uploadFile }: InputBarProps) {
               type="button"
               disabled={!isConnected}
               className={`p-2 rounded-full transition-colors disabled:opacity-30 ${isRecording
-                  ? 'text-red-500 bg-red-100 dark:text-red-400 dark:bg-red-500/20'
-                  : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/40 dark:hover:text-white/70 dark:hover:bg-white/5'
+                ? 'text-red-500 bg-red-100 dark:text-red-400 dark:bg-red-500/20'
+                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100 dark:text-white/40 dark:hover:text-white/70 dark:hover:bg-white/5'
                 }`}
               title="Voice input"
               onClick={() => {
