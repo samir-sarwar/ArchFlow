@@ -24,6 +24,7 @@ Globals:
         EXPORTS_BUCKET: !Ref ExportsBucket
         BEDROCK_MODEL_LITE: us.amazon.nova-2-lite-v1:0
         BEDROCK_MODEL_SONIC: us.amazon.nova-2-sonic-v1:0
+        GITHUB_TOKEN: ''
         LOG_LEVEL: INFO
 
 Resources:

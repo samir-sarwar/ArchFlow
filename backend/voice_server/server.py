@@ -25,6 +25,8 @@ import websockets
 
 from .session_manager import S2sSessionManager
 from .db_client import VoiceSessionDBClient
+from .text_triage import classify_text_complexity, handle_text_via_lite
+from .github_context import maybe_fetch_github_context
 
 warnings.filterwarnings("ignore")
 
@@ -162,7 +164,7 @@ def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 200
 
 # ─── Nova Sonic → ArchFlow event translator ───
 
-async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, session_id: str | None, db_client: VoiceSessionDBClient):
+async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, session_id: str | None, db_client: VoiceSessionDBClient, is_voice: bool = True):
     """
     Read raw Nova Sonic events from the output queue and translate them
     into ArchFlow WebSocket messages for the browser.
@@ -190,11 +192,11 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, sess
         transcription = " ".join(user_texts).strip()
 
         logger.info(
-            "Flushing response — transcription=%d chars, response=%d chars, audio=%s",
-            len(transcription), len(full_text), has_audio,
+            "Flushing response — transcription=%d chars, response=%d chars, audio=%s, is_voice=%s",
+            len(transcription), len(full_text), has_audio, is_voice,
         )
 
-        await _send({
+        response_msg = {
             "type": "ai_response",
             "payload": {
                 "text": full_text or "(No text response received)",
@@ -202,16 +204,20 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, sess
                 "transcription": transcription,
                 "hasAudio": has_audio,
             },
-        })
+        }
+        if session_id:
+            response_msg["sessionId"] = session_id
+        await _send(response_msg)
 
         if has_audio:
             await _send({"type": "audio_end"})
 
         if session_id and db_client and (transcription or full_text):
             try:
-                # Run in a thread or just call it directly (boto3 is blocking, but it's okay for now or we use run_in_executor)
-                # Since append_voice_interaction is blocking, it's better to use asyncio.to_thread
-                await asyncio.to_thread(db_client.append_voice_interaction, session_id, transcription, full_text)
+                await asyncio.to_thread(
+                    db_client.append_voice_interaction,
+                    session_id, transcription, full_text, is_voice,
+                )
             except Exception as e:
                 logger.error("Failed to save voice interaction to DB: %s", e)
 
@@ -347,6 +353,204 @@ async def _handle_nova_events(websocket, stream_manager: S2sSessionManager, sess
 
 
 
+# ─── Text-via-Sonic handler ───
+
+async def _handle_text_via_sonic(
+    websocket,
+    text: str,
+    session_id: str | None,
+    current_diagram: str | None,
+    region: str,
+    db_client: VoiceSessionDBClient,
+):
+    """
+    Process a text chat message through Nova Sonic's bidirectional stream.
+
+    Opens a fresh stream, sends the system prompt + user text as cross-modal
+    input, collects the text response (discards audio), and sends ai_response
+    back to the browser.
+    """
+    import uuid as _uuid
+    from .s2s_events import S2sEvent, ARCHFLOW_SYSTEM_PROMPT, ARCHFLOW_TOOL_CONFIG
+
+    # Generate a sessionId if none was provided (first-ever message)
+    if not session_id:
+        session_id = str(_uuid.uuid4())
+        logger.info("Text-via-sonic: created new session %s", session_id)
+        try:
+            await websocket.send(json.dumps({
+                "type": "voice_session_started",
+                "sessionId": session_id,
+            }))
+        except websockets.exceptions.ConnectionClosed:
+            return
+
+    stream_manager = S2sSessionManager(region=region)
+
+    # Diagram callback — same as voice path
+    async def _on_diagram(diagram_syntax: str):
+        if session_id:
+            await asyncio.to_thread(db_client.save_diagram, session_id, diagram_syntax)
+        try:
+            await websocket.send(json.dumps({
+                "type": "diagram_update",
+                "payload": {"diagram": diagram_syntax},
+            }))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
+    stream_manager.on_diagram_generated = _on_diagram
+
+    try:
+        await stream_manager.initialize_stream()
+    except Exception as exc:
+        logger.error("Failed to init Nova Sonic for text: %s", exc, exc_info=True)
+        try:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "payload": {"message": f"Failed to connect to AI: {exc}"},
+            }))
+        except Exception:
+            pass
+        return
+
+    prompt_name = str(_uuid.uuid4())
+
+    # Collect responses via the nova event handler (is_voice=False for text chat)
+    nova_task = asyncio.create_task(
+        _handle_nova_events(websocket, stream_manager, session_id, db_client, is_voice=False)
+    )
+
+    try:
+        # 1. sessionStart
+        await stream_manager.send_raw_event(
+            S2sEvent.session_start()
+        )
+
+        # 2. promptStart (with tool config, text + audio output config)
+        await stream_manager.send_raw_event(
+            S2sEvent.prompt_start(prompt_name, tool_config=ARCHFLOW_TOOL_CONFIG)
+        )
+        stream_manager.prompt_name = prompt_name
+
+        # 3. System prompt (enriched with history + file context)
+        system_content_name = str(_uuid.uuid4())
+        system_prompt = ARCHFLOW_SYSTEM_PROMPT
+
+        # For text chat, add more detailed output instructions
+        system_prompt += (
+            "\n\nIMPORTANT: The user is typing, not speaking. "
+            "Give detailed, structured responses using markdown formatting. "
+            "You can use longer responses with bullet points, headers, and code blocks since "
+            "the user will read (not listen to) your response."
+        )
+
+        if current_diagram:
+            system_prompt += f"\n\nCurrent architecture diagram:\n{current_diagram}"
+            stream_manager.current_diagram = current_diagram
+
+        # Inject session history + file context
+        if session_id:
+            try:
+                history, uploaded_files = await asyncio.gather(
+                    asyncio.to_thread(db_client.get_session_history, session_id),
+                    asyncio.to_thread(db_client.get_uploaded_files, session_id),
+                )
+                summary = _build_history_summary(history)
+                file_summary = _build_file_context_summary(uploaded_files)
+                if summary:
+                    stream_manager.conversation_history = summary
+                enrichment = "\n\n".join(filter(None, [summary, file_summary]))
+                if enrichment:
+                    system_prompt += "\n\n" + enrichment
+                    logger.info(
+                        "Injected %d chars of context into text-via-sonic prompt",
+                        len(enrichment),
+                    )
+            except Exception as e:
+                logger.error("Failed to inject context for text-via-sonic: %s", e)
+
+        await stream_manager.send_raw_event(
+            S2sEvent.content_start_text(prompt_name, system_content_name)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.text_input(prompt_name, system_content_name, system_prompt)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.content_end(prompt_name, system_content_name)
+        )
+
+        # 4. Save user message to DynamoDB BEFORE sending to Sonic
+        #    (so history is visible to both voice and text sessions)
+        if session_id:
+            try:
+                await asyncio.to_thread(
+                    db_client.append_voice_interaction,
+                    session_id, text, "", False,
+                )
+            except Exception as e:
+                logger.error("Failed to save user text message to DB: %s", e)
+
+        # 5. User text message (cross-modal text input)
+        user_content_name = str(_uuid.uuid4())
+        await stream_manager.send_raw_event(
+            S2sEvent.content_start_user_text(prompt_name, user_content_name)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.text_input(prompt_name, user_content_name, text)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.content_end(prompt_name, user_content_name)
+        )
+
+        # 6. Send a brief silence audio block to trigger Sonic's turn detection.
+        #    Cross-modal text input requires an active audio stream — without this,
+        #    Sonic waits indefinitely for audio and times out after 55 seconds.
+        import base64
+        audio_content_name = str(_uuid.uuid4())
+        # 200ms of silence at 16kHz, 16-bit mono = 6400 bytes
+        silence = base64.b64encode(b'\x00' * 6400).decode('utf-8')
+        await stream_manager.send_raw_event(
+            S2sEvent.content_start_audio(prompt_name, audio_content_name)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.audio_input(prompt_name, audio_content_name, silence)
+        )
+        await stream_manager.send_raw_event(
+            S2sEvent.content_end(prompt_name, audio_content_name)
+        )
+
+        logger.info(
+            "Text-via-sonic: sent user message (%d chars) + silence for session %s",
+            len(text), session_id,
+        )
+
+        # 5. Wait for Nova to finish (completionEnd → flush → cleanup)
+        try:
+            await asyncio.wait_for(nova_task, timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.error("Text-via-sonic: response timed out after 60s")
+            nova_task.cancel()
+            try:
+                await websocket.send(json.dumps({
+                    "type": "error",
+                    "payload": {"message": "Response timed out. Please try again."},
+                }))
+            except Exception:
+                pass
+
+    except Exception as exc:
+        logger.error("Text-via-sonic error: %s", exc, exc_info=True)
+        try:
+            await websocket.send(json.dumps({
+                "type": "error",
+                "payload": {"message": "Failed to process text message. Please try again."},
+            }))
+        except Exception:
+            pass
+    finally:
+        await stream_manager.close()
+
 
 # ─── WebSocket handler ───
 
@@ -386,6 +590,46 @@ async def _websocket_handler(websocket):
 
                 event_type = list(data["event"].keys())[0]
                 logger.debug("Received event: %s", event_type)
+
+                # ── text_message: triage via Nova Lite, then route ──
+                if event_type == "text_message":
+                    tm = data["event"]["text_message"]
+                    tm_text = tm.get("text", "")
+                    tm_session = tm.get("sessionId") or session_id
+                    tm_diagram = tm.get("currentDiagram")
+                    if tm_text:
+                        logger.info(
+                            "text_message received (%d chars, session=%s)",
+                            len(tm_text), tm_session,
+                        )
+
+                        async def _triage_and_handle(
+                            ws, text, sid, diagram, rgn, db,
+                        ):
+                            # Detect and fetch GitHub repo context before triage
+                            await maybe_fetch_github_context(text, sid, rgn, db)
+
+                            complexity = await classify_text_complexity(
+                                text, sid, rgn, db,
+                            )
+                            if complexity == "lite":
+                                await handle_text_via_lite(
+                                    ws, text, sid, diagram, rgn, db,
+                                    _build_history_summary,
+                                    _build_file_context_summary,
+                                )
+                            else:
+                                await _handle_text_via_sonic(
+                                    ws, text, sid, diagram, rgn, db,
+                                )
+
+                        asyncio.create_task(
+                            _triage_and_handle(
+                                websocket, tm_text, tm_session,
+                                tm_diagram, region, db_client,
+                            )
+                        )
+                    continue
 
                 # ── sessionStart: open a new Nova Sonic stream ──
                 if event_type == "sessionStart":

@@ -1,8 +1,10 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useConversation } from '@/hooks/useConversation';
 import { useUIStore } from '@/stores/uiStore';
 import { useConversationStore } from '@/stores/conversationStore';
-import { Mic, Plus, Send, MessageSquare } from 'lucide-react';
+import { Mic, Plus, Send, MessageSquare, Github } from 'lucide-react';
+
+const GITHUB_PREFIX_RE = /^@github:\s*/i;
 
 interface InputBarProps {
   uploadFile: (file: File) => void;
@@ -12,7 +14,9 @@ export function InputBar({ uploadFile }: InputBarProps) {
   const [input, setInput] = useState('');
   const [isMultiLine, setIsMultiLine] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const hasGithubPrefix = useMemo(() => GITHUB_PREFIX_RE.test(input), [input]);
   const { sendMessage, isConnected } = useConversation();
   const isLoading = useUIStore((s) => s.isLoading);
   const chatOverlayOpen = useUIStore((s) => s.chatOverlayOpen);
@@ -31,6 +35,14 @@ export function InputBar({ uploadFile }: InputBarProps) {
   useEffect(() => {
     resizeTextarea();
   }, [input, resizeTextarea]);
+
+  // Sync highlight overlay scroll with textarea
+  const syncScroll = useCallback(() => {
+    if (textareaRef.current && highlightRef.current) {
+      highlightRef.current.scrollTop = textareaRef.current.scrollTop;
+      highlightRef.current.scrollLeft = textareaRef.current.scrollLeft;
+    }
+  }, []);
 
   const doSubmit = () => {
     if (!input.trim() || !isConnected || isLoading) return;
@@ -75,21 +87,49 @@ export function InputBar({ uploadFile }: InputBarProps) {
         className={`glass-input flex flex-col shadow-lg shadow-gray-300/30 dark:shadow-black/20 animate-slide-up transition-[border-radius] duration-200 ${isMultiLine ? 'rounded-2xl' : 'rounded-[24px]'
           }`}
       >
-        {/* Text input */}
-        <textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={
-            isConnected
-              ? "Describe your architecture... e.g., 'Connect a new Data Lake to the Analytics Service'"
-              : 'Connecting...'
-          }
-          disabled={!isConnected}
-          rows={1}
-          className="w-full bg-transparent text-gray-900 dark:text-white/90 text-sm placeholder:text-gray-400 dark:placeholder:text-white/30 focus:outline-none disabled:opacity-50 resize-none max-h-40 px-4 pt-3 pb-1 leading-5"
-        />
+        {/* Text input with @github: highlight overlay */}
+        <div className="relative w-full">
+          {/* Highlight overlay — renders colored @github: prefix behind the transparent textarea */}
+          {hasGithubPrefix && (
+            <div
+              ref={highlightRef}
+              aria-hidden
+              className="absolute inset-0 pointer-events-none px-4 pt-3 pb-1 text-sm leading-5 whitespace-pre-wrap break-words overflow-hidden"
+            >
+              <span className="text-purple-500 dark:text-purple-400 font-semibold">
+                {input.match(GITHUB_PREFIX_RE)?.[0]}
+              </span>
+              <span className="text-transparent">
+                {input.replace(GITHUB_PREFIX_RE, '')}
+              </span>
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onScroll={syncScroll}
+            placeholder={
+              isConnected
+                ? "Describe your architecture... or '@github: <repo-url>' to add repo context"
+                : 'Connecting...'
+            }
+            disabled={!isConnected}
+            rows={1}
+            className={`w-full bg-transparent text-sm placeholder:text-gray-400 dark:placeholder:text-white/30 focus:outline-none disabled:opacity-50 resize-none max-h-40 px-4 pt-3 pb-1 leading-5 ${
+              hasGithubPrefix
+                ? 'text-transparent caret-gray-900 dark:caret-white'
+                : 'text-gray-900 dark:text-white/90'
+            }`}
+          />
+          {/* GitHub indicator icon */}
+          {hasGithubPrefix && (
+            <div className="absolute right-3 top-3 text-purple-500 dark:text-purple-400">
+              <Github className="w-4 h-4" />
+            </div>
+          )}
+        </div>
 
         {/* Bottom action row */}
         <div className="flex items-center justify-between px-2 pb-2 pt-1">
