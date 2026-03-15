@@ -17,7 +17,11 @@ ARCHFLOW_SYSTEM_PROMPT = (
     "When the user asks you to create, modify, visualize, or diagram any software architecture, "
     "use the generateDiagram tool. Briefly describe what you plan to create, then call the tool. "
     "After receiving the tool result, summarize what was created in the diagram. "
-    "Keep your spoken responses conversational and under 4-5 sentences so they feel natural when heard aloud."
+    "Keep your spoken responses conversational and under 4-5 sentences so they feel natural when heard aloud. "
+    "When the prompt includes repository context (file structure, README, or file analysis), "
+    "treat it as primary input. Ground your advice and diagrams in the repository's actual "
+    "components, technologies, and structure. Reference specific items from the context "
+    "rather than giving generic advice."
 )
 
 ARCHFLOW_TOOL_CONFIG = {

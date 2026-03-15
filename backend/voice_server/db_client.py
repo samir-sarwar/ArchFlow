@@ -17,7 +17,7 @@ class VoiceSessionDBClient:
     def get_session_history(self, session_id: str) -> list[dict]:
         """Retrieve past messages for a given session."""
         try:
-            response = self.table.get_item(Key={"session_id": session_id})
+            response = self.table.get_item(Key={"session_id": session_id}, ConsistentRead=True)
             if "Item" in response:
                 return response["Item"].get("messages", [])
             return []
@@ -31,6 +31,7 @@ class VoiceSessionDBClient:
             response = self.table.get_item(
                 Key={"session_id": session_id},
                 ProjectionExpression="uploaded_files",
+                ConsistentRead=True,
             )
             if "Item" in response:
                 files = response["Item"].get("uploaded_files", [])
