@@ -97,7 +97,7 @@ def _start_health_server(host: str, port: int):
 
 # ─── History summary builder ───
 
-def _build_history_summary(history: list[dict], max_chars: int = 1500) -> str:
+def _build_history_summary(history: list[dict], max_chars: int = 3000) -> str:
     """Build a compact conversation summary to append to the system prompt."""
     relevant = [
         m for m in history
@@ -122,11 +122,77 @@ def _build_history_summary(history: list[dict], max_chars: int = 1500) -> str:
     return "\n".join(lines) if len(lines) > 1 else ""
 
 
-def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 2000) -> str:
+async def _wait_for_pending_analyses(
+    db_client: VoiceSessionDBClient,
+    session_id: str,
+    region: str = "us-east-1",
+) -> list[dict]:
+    """Ensure all uploaded_files have context. Self-heals by fetching directly if Lambda hasn't completed."""
+    files = await asyncio.to_thread(db_client.get_uploaded_files, session_id)
+    pending = [
+        f for f in files
+        if f.get("status") in ("pending", "analyzing") and not f.get("file_analysis")
+    ]
+    if not pending:
+        return files
+
+    logger.info(
+        "Found %d pending analyses (session=%s), self-healing...",
+        len(pending), session_id,
+    )
+
+    # Self-heal: fetch context directly for pending GitHub repos
+    for f in pending:
+        file_key = f.get("file_key", "")
+        if file_key.startswith("github://"):
+            parts = file_key.replace("github://", "").split("/")
+            if len(parts) >= 2:
+                url = f"https://github.com/{parts[0]}/{parts[1]}"
+                logger.info("Self-healing: fetching GitHub context for %s", url)
+                await maybe_fetch_github_context(url, session_id, region, db_client)
+
+    # Re-read after self-heal
+    files = await asyncio.to_thread(db_client.get_uploaded_files, session_id)
+    logger.info(
+        "After self-heal: %d files, %d with file_analysis",
+        len(files), len([f for f in files if f.get("file_analysis")]),
+    )
+    return files
+
+
+def _load_context_from_s3(s3_key: str) -> str:
+    """Fetch repo context from S3. Returns empty string on failure."""
+    bucket = os.environ.get("UPLOADS_BUCKET", "archflow-uploads-dev")
+    try:
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket=bucket, Key=s3_key)
+        content = obj["Body"].read().decode("utf-8")
+        if not content:
+            logger.warning("S3 context load returned empty for key: %s (bucket: %s)", s3_key, bucket)
+        else:
+            logger.info("Loaded %d chars from S3: %s (bucket: %s)", len(content), s3_key, bucket)
+        return content
+    except Exception:
+        logger.error("Failed to load context from S3: %s (bucket: %s)", s3_key, bucket, exc_info=True)
+        return ""
+
+
+def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 100000) -> str:
     """Build a file analysis summary for the voice system prompt."""
     analyzed = [f for f in uploaded_files if f.get("file_analysis")]
+    logger.info(
+        "_build_file_context_summary: %d total files, %d with file_analysis",
+        len(uploaded_files), len(analyzed),
+    )
     if not analyzed:
         return ""
+
+    for f in analyzed:
+        fa = f.get("file_analysis", {})
+        logger.info(
+            "  file=%s status=%s analysis_keys=%s",
+            f.get("file_name"), f.get("status"), list(fa.keys()) if isinstance(fa, dict) else type(fa).__name__,
+        )
 
     lines = ["Uploaded file context:"]
     total = 0
@@ -134,24 +200,58 @@ def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 200
         analysis = f["file_analysis"]
         name = f.get("file_name", "file")
         parts = [f"- {name}:"]
+        got_content = False
         if isinstance(analysis, dict):
-            if analysis.get("summary"):
-                parts.append(f"  Summary: {analysis['summary'][:200]}")
-            for key in ("components", "technologies", "patterns", "data_flows"):
-                items = analysis.get(key, [])
-                if items and isinstance(items, list):
-                    parts.append(f"  {key.replace('_', ' ').title()}: {', '.join(str(i) for i in items[:10])}")
-            reqs = analysis.get("requirements")
-            if isinstance(reqs, dict):
-                for rtype in ("functional", "non_functional"):
-                    r_list = reqs.get(rtype, [])
-                    if r_list and isinstance(r_list, list):
-                        parts.append(f"  {rtype.replace('_', ' ').title()} requirements: {', '.join(str(r) for r in r_list[:5])}")
-            constraints = analysis.get("constraints", [])
-            if constraints and isinstance(constraints, list):
-                parts.append(f"  Constraints: {', '.join(str(c) for c in constraints[:5])}")
+            # Repomix output stored in S3
+            if analysis.get("repomix_s3_key"):
+                repomix_text = _load_context_from_s3(analysis["repomix_s3_key"])
+                if repomix_text:
+                    remaining = max_chars - total
+                    parts.append(repomix_text[:remaining])
+                    got_content = True
+                else:
+                    # S3 load failed — fallback to analysis_summary from DynamoDB
+                    fallback = f.get("analysis_summary", "")
+                    if fallback:
+                        logger.warning("S3 load failed for %s, using analysis_summary fallback", name)
+                        parts.append(f"  {fallback}")
+                        got_content = True
+                    else:
+                        logger.warning("S3 load failed for %s and no analysis_summary fallback", name)
+            # Backward compat: inline repomix output
+            elif analysis.get("repomix_output"):
+                remaining = max_chars - total
+                parts.append(analysis["repomix_output"][:remaining])
+                got_content = True
+            else:
+                # Legacy structured analysis format
+                if analysis.get("summary"):
+                    parts.append(f"  Summary: {analysis['summary'][:200]}")
+                    got_content = True
+                for key in ("components", "technologies", "patterns", "data_flows"):
+                    items = analysis.get(key, [])
+                    if items and isinstance(items, list):
+                        parts.append(f"  {key.replace('_', ' ').title()}: {', '.join(str(i) for i in items[:10])}")
+                        got_content = True
+                reqs = analysis.get("requirements")
+                if isinstance(reqs, dict):
+                    for rtype in ("functional", "non_functional"):
+                        r_list = reqs.get(rtype, [])
+                        if r_list and isinstance(r_list, list):
+                            parts.append(f"  {rtype.replace('_', ' ').title()} requirements: {', '.join(str(r) for r in r_list[:5])}")
+                            got_content = True
+                constraints = analysis.get("constraints", [])
+                if constraints and isinstance(constraints, list):
+                    parts.append(f"  Constraints: {', '.join(str(c) for c in constraints[:5])}")
+                    got_content = True
         else:
             parts.append(f"  {str(analysis)[:300]}")
+            got_content = True
+
+        # Skip files with no actual content — don't mislead the AI with empty labels
+        if not got_content:
+            logger.warning("Skipping file %s — no content available", name)
+            continue
 
         block = "\n".join(parts)
         if total + len(block) > max_chars:
@@ -159,7 +259,9 @@ def _build_file_context_summary(uploaded_files: list[dict], max_chars: int = 200
         lines.append(block)
         total += len(block)
 
-    return "\n".join(lines) if len(lines) > 1 else ""
+    result = "\n".join(lines) if len(lines) > 1 else ""
+    logger.info("_build_file_context_summary result: %d chars", len(result))
+    return result
 
 
 # ─── Nova Sonic → ArchFlow event translator ───
@@ -454,7 +556,11 @@ async def _handle_text_via_sonic(
             try:
                 history, uploaded_files = await asyncio.gather(
                     asyncio.to_thread(db_client.get_session_history, session_id),
-                    asyncio.to_thread(db_client.get_uploaded_files, session_id),
+                    _wait_for_pending_analyses(db_client, session_id, region),
+                )
+                logger.info(
+                    "text-via-sonic context load: session=%s, history=%d msgs, uploaded_files=%d",
+                    session_id, len(history), len(uploaded_files),
                 )
                 summary = _build_history_summary(history)
                 file_summary = _build_file_context_summary(uploaded_files)
@@ -464,11 +570,16 @@ async def _handle_text_via_sonic(
                 if enrichment:
                     system_prompt += "\n\n" + enrichment
                     logger.info(
-                        "Injected %d chars of context into text-via-sonic prompt",
-                        len(enrichment),
+                        "Injected %d chars of context into text-via-sonic prompt (history=%d, file_ctx=%d)",
+                        len(enrichment), len(summary), len(file_summary),
+                    )
+                else:
+                    logger.warning(
+                        "No enrichment for text-via-sonic session %s (history_len=%d, file_summary_len=%d)",
+                        session_id, len(summary), len(file_summary),
                     )
             except Exception as e:
-                logger.error("Failed to inject context for text-via-sonic: %s", e)
+                logger.error("Failed to inject context for text-via-sonic: %s", e, exc_info=True)
 
         await stream_manager.send_raw_event(
             S2sEvent.content_start_text(prompt_name, system_content_name)
@@ -617,6 +728,7 @@ async def _websocket_handler(websocket):
                                     ws, text, sid, diagram, rgn, db,
                                     _build_history_summary,
                                     _build_file_context_summary,
+                                    wait_for_analyses=_wait_for_pending_analyses,
                                 )
                             else:
                                 await _handle_text_via_sonic(
@@ -727,7 +839,11 @@ async def _websocket_handler(websocket):
                             try:
                                 history, uploaded_files = await asyncio.gather(
                                     asyncio.to_thread(db_client.get_session_history, session_id),
-                                    asyncio.to_thread(db_client.get_uploaded_files, session_id),
+                                    _wait_for_pending_analyses(db_client, session_id, region),
+                                )
+                                logger.info(
+                                    "Voice stream context load: session=%s, history=%d msgs, uploaded_files=%d",
+                                    session_id, len(history), len(uploaded_files),
                                 )
                                 summary = _build_history_summary(history)
                                 file_summary = _build_file_context_summary(uploaded_files)
@@ -740,12 +856,15 @@ async def _websocket_handler(websocket):
                                     enriched["event"] = dict(data["event"])
                                     enriched["event"]["textInput"] = dict(data["event"]["textInput"])
                                     enriched["event"]["textInput"]["content"] = content + "\n\n" + enrichment
-                                    logger.info("Injecting context (%d chars) into system prompt for session %s", len(enrichment), session_id)
+                                    logger.info(
+                                        "Injecting context (%d chars) into voice stream prompt for session %s (history=%d, file_ctx=%d)",
+                                        len(enrichment), session_id, len(summary), len(file_summary),
+                                    )
                                     await stream_manager.send_raw_event(enriched)
                                 else:
-                                    logger.info(
-                                        "No enrichment context for session %s (history=%d msgs, files=%d)",
-                                        session_id, len(history), len(uploaded_files),
+                                    logger.warning(
+                                        "No enrichment for voice stream session %s (history=%d msgs, files=%d, history_len=%d, file_summary_len=%d)",
+                                        session_id, len(history), len(uploaded_files), len(summary), len(file_summary),
                                     )
                                     await stream_manager.send_raw_event(data)
                             except Exception as e:
@@ -775,6 +894,16 @@ async def _websocket_handler(websocket):
 
 async def _main(host: str, port: int, health_port: int | None, profile: str | None):
     _bootstrap_aws_credentials(profile=profile)
+
+    # Verify S3 configuration at startup
+    uploads_bucket = os.environ.get("UPLOADS_BUCKET", "archflow-uploads-dev")
+    logger.info("UPLOADS_BUCKET=%s", uploads_bucket)
+    try:
+        boto3.client("s3").head_bucket(Bucket=uploads_bucket)
+        logger.info("S3 bucket '%s' is accessible", uploads_bucket)
+    except Exception as exc:
+        logger.error("S3 bucket '%s' NOT accessible — file context will fail: %s", uploads_bucket, exc)
+
     if health_port:
         _start_health_server(host, health_port)
 

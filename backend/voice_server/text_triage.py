@@ -100,6 +100,7 @@ async def handle_text_via_lite(
     db_client: VoiceSessionDBClient,
     build_history_summary,
     build_file_context_summary,
+    wait_for_analyses=None,
 ):
     """Process a text message using Nova Lite Converse API (fast path).
 
@@ -131,10 +132,16 @@ async def handle_text_via_lite(
     # Inject conversation history + file context
     if session_id:
         try:
-            history, uploaded_files = await asyncio.gather(
-                asyncio.to_thread(db_client.get_session_history, session_id),
-                asyncio.to_thread(db_client.get_uploaded_files, session_id),
-            )
+            if wait_for_analyses:
+                history, uploaded_files = await asyncio.gather(
+                    asyncio.to_thread(db_client.get_session_history, session_id),
+                    wait_for_analyses(db_client, session_id, region),
+                )
+            else:
+                history, uploaded_files = await asyncio.gather(
+                    asyncio.to_thread(db_client.get_session_history, session_id),
+                    asyncio.to_thread(db_client.get_uploaded_files, session_id),
+                )
             summary = build_history_summary(history)
             file_summary = build_file_context_summary(uploaded_files)
             enrichment = "\n\n".join(filter(None, [summary, file_summary]))
