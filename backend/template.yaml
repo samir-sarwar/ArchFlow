@@ -137,10 +137,13 @@ Resources:
       CodeUri: .
       MemorySize: 1024
       Timeout: 300
+      EphemeralStorage:
+        Size: 1024
       Policies:
-        - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
+        - S3CrudPolicy:
+            BucketName: !Ref UploadsBucket
 
   FileUploadFunction:
     Type: AWS::Serverless::Function
