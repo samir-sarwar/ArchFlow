@@ -385,7 +385,7 @@ async def _process_uploaded_file(session_id, file_key, file_name, content_type):
 
 def _handle_github_repo(body, connection_id, session_id):
     """Handle a GitHub repository URL — kick off async analysis and return immediately."""
-    from src.services.github_fetcher import parse_github_url
+    from src.services.repo_context_service import parse_github_url
 
     # Strip control characters that cause urllib to reject the URL
     repo_url = re.sub(r"[\x00-\x1f\x7f]", "", body.get("repoUrl", "")).strip()
@@ -429,7 +429,7 @@ def _handle_github_repo(body, connection_id, session_id):
                 if status == "ready":
                     # Already analyzed — return cached result immediately
                     analysis = f.get("file_analysis", {})
-                    summary = analysis.get("summary", "Already analyzed.") if isinstance(analysis, dict) else str(analysis)[:500]
+                    summary = f.get("analysis_summary", "Already analyzed.")
                     return {"statusCode": 200, "body": json.dumps({
                         "type": "repo_analysis",
                         "sessionId": session_id,
@@ -479,7 +479,7 @@ def _handle_github_repo(body, connection_id, session_id):
 
 def _handle_check_repo_status(body, connection_id, session_id):
     """Poll for async repo analysis result."""
-    from src.services.github_fetcher import parse_github_url
+    from src.services.repo_context_service import parse_github_url
 
     repo_url = re.sub(r"[\x00-\x1f\x7f]", "", body.get("repoUrl", "")).strip()
     if not repo_url or not session_id:
@@ -514,11 +514,15 @@ def _handle_check_repo_status(body, connection_id, session_id):
 
                 if status == "ready":
                     analysis = f.get("file_analysis", {})
-                    summary = (
-                        analysis.get("summary", "Repository analyzed successfully.")
-                        if isinstance(analysis, dict)
-                        else str(analysis)[:500]
-                    )
+                    summary = f.get("analysis_summary", "Repository analyzed successfully.")
+
+                    # Load actual context from S3 for debug visibility
+                    context_preview = ""
+                    if isinstance(analysis, dict) and analysis.get("repomix_s3_key"):
+                        from src.agents._file_context import _load_context_from_s3
+                        full_context = _load_context_from_s3(analysis["repomix_s3_key"])
+                        context_preview = full_context[:10000] if full_context else "(S3 load returned empty)"
+
                     return {"statusCode": 200, "body": json.dumps({
                         "type": "repo_analysis",
                         "sessionId": session_id,
@@ -527,6 +531,7 @@ def _handle_check_repo_status(body, connection_id, session_id):
                             "repoName": repo_name,
                             "summary": summary,
                             "analysis": analysis,
+                            "contextPreview": context_preview,
                         },
                     })}
 
