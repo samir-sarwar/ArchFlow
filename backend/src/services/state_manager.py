@@ -44,7 +44,9 @@ class ConversationStateManager:
 
     async def get_session(self, session_id: str) -> ConversationContext:
         """Retrieve conversation state."""
-        response = self.table.get_item(Key={"session_id": session_id})
+        response = self.table.get_item(
+            Key={"session_id": session_id}, ConsistentRead=True
+        )
 
         if "Item" not in response:
             raise SessionNotFoundError(session_id)
