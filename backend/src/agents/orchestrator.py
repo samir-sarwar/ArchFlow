@@ -48,6 +48,17 @@ Examples:
 
 Respond with ONLY the intent string, nothing else."""
 
+DIAGRAM_SUBTYPE_PROMPT = """Classify what type of Mermaid diagram the user is requesting.
+
+Respond with EXACTLY ONE of these strings:
+- USER_FLOW — user journey, user flow, user experience, process flow, workflow, or steps a person takes through a system
+- SEQUENCE — sequence diagram, request/response flow, API interaction flow, message exchange between actors
+- ER — entity-relationship diagram, data model, database schema, tables and relationships
+- C4 — C4 diagram at any level (context, container, component, deployment)
+- ARCHITECTURE — default: infrastructure diagram, system architecture, microservices, cloud design, backend/frontend structure
+
+Respond with ONLY the single word, nothing else."""
+
 GENERAL_CONVERSATION_PROMPT = """You are ArchFlow, a friendly AI software architecture assistant.
 The user is not requesting new architecture analysis right now.
 Respond naturally and concisely.
@@ -120,6 +131,24 @@ class OrchestratorAgent:
 
         return intent
 
+    async def _classify_diagram_subtype(self, message: str) -> str:
+        """Classify the diagram subtype from the user's message."""
+        try:
+            response = await self.bedrock.invoke_lite(
+                prompt=f"User request: {message}",
+                system_prompt=DIAGRAM_SUBTYPE_PROMPT,
+            )
+            subtype = response.strip().upper().strip('"')
+            valid_subtypes = {"USER_FLOW", "SEQUENCE", "ER", "C4", "ARCHITECTURE"}
+            if subtype in valid_subtypes:
+                logger.info("Diagram subtype classified", extra={"subtype": subtype})
+                return subtype
+            logger.warning("Unknown diagram subtype %r, defaulting to ARCHITECTURE", subtype)
+            return "ARCHITECTURE"
+        except Exception:
+            logger.warning("Diagram subtype classification failed, defaulting to ARCHITECTURE", exc_info=True)
+            return "ARCHITECTURE"
+
     async def _handle_general(self, message: str, context: ConversationContext) -> AgentResponse:
         """Handle casual / off-topic messages with a lightweight conversational response."""
         recent = [m for m in context.messages[-6:] if m.role in ("user", "assistant")]
@@ -166,6 +195,8 @@ class OrchestratorAgent:
                 return await self.agents["advisor"].process(context)
             elif intent == IntentType.MODIFY_DIAGRAM:
                 agent_name = "generator"
+                subtype = await self._classify_diagram_subtype(message)
+                context.metadata["diagram_subtype"] = subtype
                 return await self.agents["generator"].process(context)
             elif intent == IntentType.ANALYZE_CONTEXT:
                 agent_name = "context"

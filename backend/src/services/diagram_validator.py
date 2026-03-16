@@ -11,8 +11,10 @@ _VALID_TYPE_PATTERNS: list[tuple[str, DiagramType]] = [
     (r"^C4Context", DiagramType.C4_CONTEXT),
     (r"^C4Container", DiagramType.C4_CONTAINER),
     (r"^C4Component", DiagramType.C4_COMPONENT),
-    # Lenient catch-all for other standard Mermaid diagram starters
-    (r"^(stateDiagram|classDiagram|gantt|pie|mindmap|gitGraph|xychart)", DiagramType.FLOWCHART),
+    # classDiagram is accepted as a reasonable approximation for component diagrams.
+    # Other types (stateDiagram, gantt, pie, mindmap, etc.) are rejected to trigger
+    # the retry path with correct type enforcement.
+    (r"^classDiagram", DiagramType.FLOWCHART),
 ]
 
 # Mermaid keywords that are not node IDs

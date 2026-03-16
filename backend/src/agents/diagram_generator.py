@@ -29,12 +29,25 @@ Diagram type — match the diagram structure to the user's intent:
 
 USER JOURNEY / USER FLOW / PROCESS diagrams (when the user says "user journey", "user flow", \
 "user experience", "process flow", "workflow", or describes steps a person takes):
-- Use `flowchart TD` or `flowchart LR`
+- Use `flowchart TD` or `flowchart LR` — NEVER use `stateDiagram` for user flows
 - Nodes represent: user actions, screens/pages, decision points, outcomes
 - Do NOT add infrastructure nodes (databases, API gateways, load balancers, queues, caches)
 - Use diamond shapes `{Decision?}` for user decisions, rounded `(Action)` for user actions
 - Subgraphs represent phases or stages of the journey (e.g., "Onboarding", "Checkout"), not service tiers
 - Edge labels describe user intent ("clicks buy", "submits form", "confirms"), not protocols or HTTP methods
+
+Example skeleton (adapt to actual content):
+  flowchart TD
+      start(["User opens app"])
+      login["Login screen"]
+      decide{"Valid credentials?"}
+      dashboard["Dashboard"]
+      error["Show error"]
+      start --> login
+      login --> decide
+      decide -->|yes| dashboard
+      decide -->|no| error
+      error -->|retry| login
 
 SEQUENCE diagrams:
 - Focus on actor-to-actor interactions and request/response flows
@@ -42,13 +55,56 @@ SEQUENCE diagrams:
 - Use `activate`/`deactivate` for long-running interactions
 - Use `alt`/`opt`/`loop` fragments for conditional or repeated flows
 
+Example skeleton (adapt to actual content):
+  sequenceDiagram
+      participant user as User
+      participant api as API Gateway
+      participant auth as Auth Service
+      user->>api: POST /login
+      activate api
+      api->>auth: Validate credentials
+      activate auth
+      alt valid
+          auth-->>api: 200 OK + token
+      else invalid
+          auth-->>api: 401 Unauthorized
+      end
+      deactivate auth
+      api-->>user: Response
+      deactivate api
+
 ER diagrams:
 - Focus on entities (tables/collections), their attributes, and relationships
 - Use proper cardinality notation: `||--o{`, `}o--||`, etc.
 - Do NOT add service or infrastructure nodes — only data entities
 
+Example skeleton (adapt to actual content):
+  erDiagram
+      USER ||--o{ ORDER : places
+      ORDER ||--|{ ORDER_ITEM : contains
+      PRODUCT ||--o{ ORDER_ITEM : "included in"
+      USER {
+          string id PK
+          string email
+          string name
+      }
+      ORDER {
+          string id PK
+          string user_id FK
+          datetime created_at
+      }
+
 C4 diagrams:
 - Follow C4 model conventions for the chosen level (Context, Container, Component)
+
+Example skeleton (adapt to actual content):
+  C4Context
+      title System Context Diagram
+      Person(user, "User", "End user of the system")
+      System(app, "Application", "Main application")
+      System_Ext(email, "Email Service", "Sends notifications")
+      Rel(user, app, "Uses")
+      Rel(app, email, "Sends emails via")
 
 ARCHITECTURE / INFRASTRUCTURE diagrams (default when discussing services, APIs, cloud, backends):
 - Default to `flowchart TD` (top-down) with the entry point at the top
@@ -57,6 +113,29 @@ ARCHITECTURE / INFRASTRUCTURE diagrams (default when discussing services, APIs, 
   - Core services in their own logical subgraph(s)
 - Use dotted arrows `-.->` for background/non-critical-path connections
 - Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout
+
+Example skeleton (adapt to actual content):
+  flowchart TD
+      client["Client App"]
+      subgraph api_layer["API Layer"]
+          gateway["API Gateway"]
+          auth["Auth Service"]
+      end
+      subgraph services["Core Services"]
+          svc_a["Service A"]
+          svc_b["Service B"]
+      end
+      subgraph data["Data Stores"]
+          db[("PostgreSQL")]
+          cache[("Redis")]
+      end
+      client --> gateway
+      gateway --> auth
+      gateway --> svc_a
+      gateway --> svc_b
+      svc_a --> db
+      svc_b --> db
+      svc_a -.-> cache
 
 Detail level — respond to depth cues in the user's request:
 - When the user says "add more detail", "go deeper", "expand", "break down", or "less abstract":
@@ -144,6 +223,32 @@ group ancillary or repeated leaf components rather than expanding every one indi
 """
 
 
+_SUBTYPE_DIRECTIVES = {
+    "USER_FLOW": (
+        "DIAGRAM TYPE REQUIRED: This is a USER FLOW / USER JOURNEY diagram.\n"
+        "You MUST start with `flowchart TD` or `flowchart LR`.\n"
+        "Do NOT use stateDiagram, sequenceDiagram, or any other type.\n\n"
+    ),
+    "SEQUENCE": (
+        "DIAGRAM TYPE REQUIRED: This is a SEQUENCE diagram.\n"
+        "You MUST start with `sequenceDiagram`.\n\n"
+    ),
+    "ER": (
+        "DIAGRAM TYPE REQUIRED: This is an ER diagram.\n"
+        "You MUST start with `erDiagram`.\n\n"
+    ),
+    "C4": (
+        "DIAGRAM TYPE REQUIRED: This is a C4 diagram.\n"
+        "You MUST start with `C4Context`, `C4Container`, or `C4Component`.\n\n"
+    ),
+}
+
+
+def _build_type_directive(subtype: str) -> str:
+    """Return an explicit type directive for the given diagram subtype, or empty string for ARCHITECTURE."""
+    return _SUBTYPE_DIRECTIVES.get(subtype, "")
+
+
 class DiagramGenerator:
     """Agent that generates and updates Mermaid.js diagrams using Nova Lite."""
 
@@ -170,11 +275,14 @@ class DiagramGenerator:
         from src.agents._file_context import build_file_context_block
         file_context = build_file_context_block(context.uploaded_files)
 
+        subtype = context.metadata.get("diagram_subtype", "ARCHITECTURE")
+        type_directive = _build_type_directive(subtype)
+
         if context.current_diagram:
             latest_user_msg = next(
                 (m.content for m in reversed(recent_messages) if m.role == "user"), ""
             )
-            prompt = f"""You are MODIFYING an existing architecture diagram. Do NOT create a new diagram from scratch.
+            prompt = f"""{type_directive}You are MODIFYING an existing architecture diagram. Do NOT create a new diagram from scratch.
 
 TASK: Apply ONLY the change described in the change request below.
 
@@ -212,7 +320,7 @@ IMPORTANT — Uploaded file analysis is available in the system prompt. It is th
 - Include external_services as distinct nodes connected to the components that use them.
 - Do NOT fall back to generic names (e.g., "Database", "API Gateway") when the analysis provides specific ones (e.g., "MongoDB Atlas", "Next.js App Router").
 """
-            prompt = f"""Based on this architecture conversation, generate a new Mermaid.js diagram.
+            prompt = f"""{type_directive}Based on this architecture conversation, generate a new Mermaid.js diagram.
 
 Conversation:
 {conversation}
@@ -257,6 +365,7 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
                 extra={"error": state.error_message, "session_id": context.session_id},
             )
             retry_prompt = (
+                f"{type_directive}"
                 f"The Mermaid syntax you generated has this error: {state.error_message}. "
                 f"Fix it and return ONLY valid Mermaid syntax — no explanation, no code fences.\n\n"
                 f"Broken syntax:\n{cleaned}"
