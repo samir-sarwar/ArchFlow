@@ -49,10 +49,6 @@ def build_file_context_block(uploaded_files: list[dict], max_chars: int = 100000
                 if repomix_text:
                     remaining = max_chars - total
                     parts.append(repomix_text[:remaining])
-            # Backward compat: inline repomix output
-            elif analysis.get("repomix_output"):
-                remaining = max_chars - total
-                parts.append(analysis["repomix_output"][:remaining])
             else:
                 # Legacy structured analysis format
                 if analysis.get("summary"):

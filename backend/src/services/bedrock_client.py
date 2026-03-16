@@ -169,15 +169,6 @@ class BedrockClient:
 
         raise last_exc
 
-    async def invoke_pro(self, prompt: str, system_prompt: str = "") -> str:
-        """Invoke Nova 2 Lite with higher token limit for complex reasoning.
-
-        Note: Nova 2 has no Pro tier. This method uses Lite with max_tokens=4096.
-        """
-        return await self.invoke_model(
-            prompt, system_prompt, model_id=self.model_lite, max_tokens=4096
-        )
-
     async def invoke_with_image(
         self,
         image_b64: str,
@@ -186,7 +177,7 @@ class BedrockClient:
         system_prompt: str = "",
         max_tokens: int = 4096,
     ) -> str:
-        """Invoke Nova Pro 2 with an image for vision analysis."""
+        """Invoke Nova 2 Lite with an image for vision analysis."""
         logger.info("Invoking Bedrock with image", extra={"model_id": self.model_lite})
 
         fmt = media_type.split("/")[-1]
@@ -215,156 +206,6 @@ class BedrockClient:
 
         response = self.client.converse(**kwargs)
         return response["output"]["message"]["content"][0]["text"]
-
-    async def invoke_pro_streaming(
-        self,
-        prompt: str,
-        system_prompt: str = "",
-        max_tokens: int = 4096,
-    ):
-        """Invoke Nova Pro 2 with streaming — yields text chunks as they arrive."""
-        kwargs = {
-            "modelId": self.model_lite,
-            "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": max_tokens, "topP": 0.9, "temperature": 0.7},
-        }
-        if system_prompt:
-            kwargs["system"] = [{"text": system_prompt}]
-
-        response = self.client.converse_stream(**kwargs)
-        stream = response.get("stream")
-        if stream:
-            for event in stream:
-                if "contentBlockDelta" in event:
-                    delta = event["contentBlockDelta"].get("delta", {})
-                    if "text" in delta:
-                        yield delta["text"]
-
-    async def invoke_sonic(
-        self,
-        audio_pcm: bytes,
-        system_prompt: str = "",
-        on_transcription: "Callable[[str], None] | None" = None,
-    ) -> dict:
-        """
-        Invoke Nova Sonic 2 for speech-to-text and audio response.
-        Returns dict with 'transcription', 'response_text', 'audio_chunks'.
-
-        NOTE: This is the single-shot version (whole audio at once).
-        For real-time streaming, the voice_server/ module is used instead.
-        """
-        from aws_sdk_bedrock_runtime.client import (
-            BedrockRuntimeClient as SonicClient,
-            InvokeModelWithBidirectionalStreamOperationInput,
-        )
-        from aws_sdk_bedrock_runtime.models import (
-            BidirectionalInputPayloadPart,
-            InvokeModelWithBidirectionalStreamInputChunk,
-        )
-        from aws_sdk_bedrock_runtime.config import Config as SonicConfig
-        from smithy_aws_core.identity.environment import EnvironmentCredentialsResolver
-
-        logger.info("Invoking Nova Sonic (single-shot)", extra={"audio_size": len(audio_pcm)})
-
-        prompt_name = str(uuid.uuid4())
-        content_name = str(uuid.uuid4())
-        audio_content_name = str(uuid.uuid4())
-
-        config = SonicConfig(
-            endpoint_uri=f"https://bedrock-runtime.{self.region}.amazonaws.com",
-            region=self.region,
-            aws_credentials_identity_resolver=EnvironmentCredentialsResolver(),
-        )
-        sonic_client = SonicClient(config=config)
-
-        async def _send_event(stream, event_dict: dict):
-            chunk = InvokeModelWithBidirectionalStreamInputChunk(
-                value=BidirectionalInputPayloadPart(
-                    bytes_=json.dumps(event_dict).encode("utf-8")
-                )
-            )
-            await stream.input_stream.send(chunk)
-
-        stream = await sonic_client.invoke_model_with_bidirectional_stream(
-            InvokeModelWithBidirectionalStreamOperationInput(model_id=self.model_sonic)
-        )
-
-        user_texts = []
-        assistant_texts = []
-        audio_chunks = []
-        current_role = None
-        collection_error = None
-
-        async def _collect_responses():
-            nonlocal current_role, collection_error
-            try:
-                while True:
-                    output = await stream.await_output()
-                    result = await output[1].receive()
-                    if result.value and result.value.bytes_:
-                        data = json.loads(result.value.bytes_.decode("utf-8"))
-                        if "event" not in data:
-                            continue
-                        evt = data["event"]
-                        if "contentStart" in evt:
-                            current_role = evt["contentStart"].get("role")
-                        elif "textOutput" in evt:
-                            text = evt["textOutput"]["content"]
-                            if current_role == "USER":
-                                user_texts.append(text)
-                                if on_transcription:
-                                    on_transcription(" ".join(user_texts))
-                            elif current_role == "ASSISTANT":
-                                assistant_texts.append(text)
-                        elif "audioOutput" in evt:
-                            audio_b64 = evt["audioOutput"].get("content", "")
-                            if audio_b64:
-                                audio_chunks.append(audio_b64)
-                        elif "completionEnd" in evt:
-                            break
-            except StopAsyncIteration:
-                pass
-            except Exception as e:
-                collection_error = e
-                logger.error("Error collecting Sonic responses", exc_info=True)
-
-        response_task = asyncio.create_task(_collect_responses())
-
-        await _send_event(stream, {"event": {"sessionStart": {"inferenceConfiguration": {"maxTokens": 1024, "topP": 0.95, "temperature": 0.7}}}})
-        await _send_event(stream, {"event": {"promptStart": {"promptName": prompt_name, "textOutputConfiguration": {"mediaType": "text/plain"}, "audioOutputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 24000, "sampleSizeBits": 16, "channelCount": 1, "voiceId": "tiffany", "encoding": "base64", "audioType": "SPEECH"}}}})
-
-        if system_prompt:
-            await _send_event(stream, {"event": {"contentStart": {"promptName": prompt_name, "contentName": content_name, "type": "TEXT", "interactive": False, "role": "SYSTEM", "textInputConfiguration": {"mediaType": "text/plain"}}}})
-            await _send_event(stream, {"event": {"textInput": {"promptName": prompt_name, "contentName": content_name, "content": system_prompt}}})
-            await _send_event(stream, {"event": {"contentEnd": {"promptName": prompt_name, "contentName": content_name}}})
-
-        await _send_event(stream, {"event": {"contentStart": {"promptName": prompt_name, "contentName": audio_content_name, "type": "AUDIO", "interactive": True, "role": "USER", "audioInputConfiguration": {"mediaType": "audio/lpcm", "sampleRateHertz": 16000, "sampleSizeBits": 16, "channelCount": 1, "audioType": "SPEECH", "encoding": "base64"}}}})
-
-        chunk_size = 8192
-        for i in range(0, len(audio_pcm), chunk_size):
-            chunk = audio_pcm[i: i + chunk_size]
-            await _send_event(stream, {"event": {"audioInput": {"promptName": prompt_name, "contentName": audio_content_name, "content": base64.b64encode(chunk).decode("utf-8")}}})
-
-        await _send_event(stream, {"event": {"contentEnd": {"promptName": prompt_name, "contentName": audio_content_name}}})
-        await _send_event(stream, {"event": {"promptEnd": {"promptName": prompt_name}}})
-        await _send_event(stream, {"event": {"sessionEnd": {}}})
-        await stream.input_stream.close()
-
-        try:
-            await asyncio.wait_for(response_task, timeout=60.0)
-        except asyncio.TimeoutError:
-            logger.error("Nova Sonic response collection timed out after 60s")
-            response_task.cancel()
-            raise RuntimeError("Nova Sonic response collection timed out")
-
-        if collection_error:
-            raise collection_error
-
-        return {
-            "transcription": " ".join(user_texts).strip(),
-            "response_text": " ".join(assistant_texts).strip(),
-            "audio_chunks": audio_chunks,
-        }
 
     async def invoke_sonic_stream(self) -> "SonicStreamController":
         """Open a persistent bidirectional stream to Nova Sonic 2.
