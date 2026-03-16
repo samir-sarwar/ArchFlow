@@ -7,6 +7,10 @@ Parameters:
     Type: String
     Default: dev
     AllowedValues: [dev, staging, prod]
+  JwtSecret:
+    Type: String
+    Default: archflow-dev-jwt-secret-change-in-prod
+    NoEcho: true
 
 Globals:
   Function:
@@ -26,6 +30,8 @@ Globals:
         BEDROCK_MODEL_SONIC: us.amazon.nova-2-sonic-v1:0
         GITHUB_TOKEN: ''
         LOG_LEVEL: INFO
+        USERS_TABLE_NAME: !Ref UsersTable
+        JWT_SECRET: !Ref JwtSecret
 
 Resources:
   # ─── WebSocket API (text chat + file upload) ───
@@ -107,6 +113,8 @@ Resources:
         - AmazonBedrockFullAccess
         - DynamoDBCrudPolicy:
             TableName: !Ref ConversationsTable
+        - DynamoDBReadPolicy:
+            TableName: !Ref UsersTable
         - S3CrudPolicy:
             BucketName: !Ref UploadsBucket
         - Statement:
@@ -188,6 +196,37 @@ Resources:
             Path: /share
             Method: POST
 
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub archflow-auth-${Environment}
+      Handler: src.handlers.auth.lambda_handler
+      CodeUri: .
+      MemorySize: 512
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref UsersTable
+      Events:
+        Signup:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /auth/signup
+            Method: POST
+        Login:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /auth/login
+            Method: POST
+        Me:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RestApi
+            Path: /auth/me
+            Method: GET
+
   # ─── DynamoDB ───
   ConversationsTable:
     Type: AWS::DynamoDB::Table
@@ -197,11 +236,40 @@ Resources:
       AttributeDefinitions:
         - AttributeName: session_id
           AttributeType: S
+        - AttributeName: user_id
+          AttributeType: S
+        - AttributeName: last_activity
+          AttributeType: S
       KeySchema:
         - AttributeName: session_id
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: user-conversations-index
+          KeySchema:
+            - AttributeName: user_id
+              KeyType: HASH
+            - AttributeName: last_activity
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - title
+              - created_at
+              - current_diagram
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub archflow-users-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
 
   # ─── S3 Buckets ───
   UploadsBucket:
@@ -242,3 +310,7 @@ Outputs:
   ConversationsTableName:
     Description: DynamoDB table name
     Value: !Ref ConversationsTable
+
+  UsersTableName:
+    Description: Users DynamoDB table name
+    Value: !Ref UsersTable
