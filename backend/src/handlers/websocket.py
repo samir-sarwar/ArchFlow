@@ -19,10 +19,6 @@ from src.services.state_manager import ConversationStateManager
 from src.utils import SessionExpiredError, SessionNotFoundError, logger
 
 state_manager = ConversationStateManager()
-api_gateway = boto3.client(
-    "apigatewaymanagementapi",
-    endpoint_url=os.environ.get("WEBSOCKET_API_ENDPOINT", ""),
-)
 
 # Initialize agents (shared across Lambda invocations via warm starts)
 bedrock = BedrockClient()
@@ -557,18 +553,3 @@ def _handle_check_repo_status(body, connection_id, session_id):
         "sessionId": session_id,
         "payload": {"repoUrl": repo_url, "repoName": repo_name},
     })}
-
-
-def _send_to_client(connection_id: str, payload: dict) -> None:
-    """Send a message back to the WebSocket client via API Gateway Management API."""
-    try:
-        api_gateway.post_to_connection(
-            ConnectionId=connection_id,
-            Data=json.dumps(payload).encode(),
-        )
-    except Exception:
-        logger.error(
-            "Failed to send to client",
-            extra={"connection_id": connection_id},
-            exc_info=True,
-        )
