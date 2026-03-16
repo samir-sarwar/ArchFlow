@@ -31,14 +31,52 @@ Output rules:
 - Add meaningful labels to connections
 - Keep diagrams readable (max ~30 nodes before suggesting splits)
 
-Layout rules (apply to all diagram types where applicable):
-- Default to `flowchart TD` (top-down) with the entry point (API Gateway, Client, User) at the top
+Diagram type — match the diagram structure to the user's intent:
+
+USER JOURNEY / USER FLOW / PROCESS diagrams (when the user says "user journey", "user flow", \
+"user experience", "process flow", "workflow", or describes steps a person takes):
+- Use `flowchart TD` or `flowchart LR`
+- Nodes represent: user actions, screens/pages, decision points, outcomes
+- Do NOT add infrastructure nodes (databases, API gateways, load balancers, queues, caches)
+- Use diamond shapes `{Decision?}` for user decisions, rounded `(Action)` for user actions
+- Subgraphs represent phases or stages of the journey (e.g., "Onboarding", "Checkout"), not service tiers
+- Edge labels describe user intent ("clicks buy", "submits form", "confirms"), not protocols or HTTP methods
+
+SEQUENCE diagrams:
+- Focus on actor-to-actor interactions and request/response flows
+- Participants are actors, services, or systems — not internal classes or functions
+- Use `activate`/`deactivate` for long-running interactions
+- Use `alt`/`opt`/`loop` fragments for conditional or repeated flows
+
+ER diagrams:
+- Focus on entities (tables/collections), their attributes, and relationships
+- Use proper cardinality notation: `||--o{`, `}o--||`, etc.
+- Do NOT add service or infrastructure nodes — only data entities
+
+C4 diagrams:
+- Follow C4 model conventions for the chosen level (Context, Container, Component)
+
+ARCHITECTURE / INFRASTRUCTURE diagrams (default when discussing services, APIs, cloud, backends):
+- Default to `flowchart TD` (top-down) with the entry point at the top
 - Group related nodes into subgraphs to contain connections and reduce line crossings:
   - Databases and storage in a "Data Stores" subgraph at the bottom
-  - Security, logging, tracing, and monitoring in a "Security & Monitoring" subgraph
   - Core services in their own logical subgraph(s)
-- Use dotted arrows `-.->` for background/non-critical-path connections (logging, tracing, metrics, monitoring) to visually separate them from the main request flow (`-->`)
-- Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout and minimise line crossings
+- Use dotted arrows `-.->` for background/non-critical-path connections
+- Arrange nodes in logical tiers (entry → services → data) to create a clean hierarchical layout
+
+Detail level — respond to depth cues in the user's request:
+- When the user says "add more detail", "go deeper", "expand", "break down", or "less abstract":
+  - Identify nodes that represent high-level abstractions (e.g., "Backend", "Auth Service")
+  - Replace them with subgraphs containing their internal components
+  - Add intermediate steps between existing nodes (e.g., validation, caching, transformation)
+  - Increase node count by roughly 50-100% relative to the current diagram
+  - Preserve the overall structure — deepening adds WITHIN existing groups, not beside them
+- When the user says "simplify", "high level", "overview", "zoom out", or "more abstract":
+  - Collapse subgraphs into single representative nodes
+  - Remove intermediate steps, keep only primary flows
+  - Reduce node count by roughly 30-50%
+  - Merge closely related nodes into one
+- When modifying an existing diagram with depth changes, adjust its granularity — do not regenerate from scratch.
 
 CRITICAL — Edge consolidation (MUST follow, violations create unreadable diagrams):
 - NEVER draw N separate edges from N source nodes to the same destination. This creates a tangled mess.
@@ -211,7 +249,10 @@ class DiagramTool:
                 f"4. Do NOT reorganise, rename, or remove nodes the user did not mention.\n"
                 f"5. If adding a new node, choose a node ID consistent with the existing naming convention.\n"
                 f"6. Exception: if the user explicitly says 'start over', 'redesign', "
-                f"'create a new diagram', or 'from scratch', ignore rules 1-5 and generate a new diagram.\n\n"
+                f"'create a new diagram', or 'from scratch', ignore rules 1-5 and generate a new diagram.\n"
+                f"7. Depth changes: if the change request asks for more or less detail, adjust the "
+                f"granularity of the existing diagram (expand abstractions into subgraphs with internal "
+                f"components, or collapse subgraphs into single nodes) rather than adding unrelated nodes.\n\n"
                 f"Output ONLY valid Mermaid.js syntax. "
                 f"Do not wrap in code fences. Do not include any explanation."
             )
