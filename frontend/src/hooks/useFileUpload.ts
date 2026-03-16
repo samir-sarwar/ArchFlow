@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { api } from '@/services/api';
 import { useConversationStore } from '@/stores/conversationStore';
+import { generateId } from '@/utils/generateId';
 
 interface UploadedFile {
   name: string;
@@ -20,7 +21,7 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
       // Auto-create session if none exists (allows uploading before first message)
       let currentSessionId = sessionId;
       if (!currentSessionId) {
-        currentSessionId = crypto.randomUUID();
+        currentSessionId = generateId();
         useConversationStore.getState().setSessionId(currentSessionId);
         sendWsMessage?.({
           action: 'restore_session',

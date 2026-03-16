@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useChatHistoryStore, type ChatSummary } from '@/stores/chatHistoryStore';
 import { createChunkPlayer, playLPCMAudio, type AudioChunkPlayer } from '@/services/audio';
 import type { Message } from '@/types/conversation';
+import { generateId } from '@/utils/generateId';
 
 // Lambda WebSocket — text chat, file upload, session restore
 const WS_URL = import.meta.env.VITE_WEBSOCKET_URL || '';
@@ -476,15 +477,15 @@ export function useConversation() {
     const currentDiagram = useDiagramStore.getState().currentSyntax;
     audioSeqRef.current = 0;
 
-    const promptName = crypto.randomUUID();
-    const audioContentName = crypto.randomUUID();
-    const systemContentName = crypto.randomUUID();
+    const promptName = generateId();
+    const audioContentName = generateId();
+    const systemContentName = generateId();
     promptNameRef.current = promptName;
     audioContentNameRef.current = audioContentName;
 
     let currentSessionId = useConversationStore.getState().sessionId;
     if (!currentSessionId) {
-      currentSessionId = crypto.randomUUID();
+      currentSessionId = generateId();
       conversationStore.setSessionId(currentSessionId);
     }
 

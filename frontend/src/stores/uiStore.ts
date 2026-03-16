@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { generateId } from '@/utils/generateId';
 
 interface Notification {
   id: string;
@@ -59,7 +60,7 @@ export const useUIStore = create<UIStore>((set) => ({
     set((state) => ({
       notifications: [
         ...state.notifications,
-        { id: crypto.randomUUID(), message, type },
+        { id: generateId(), message, type },
       ],
     })),
 

@@ -1,6 +1,6 @@
 from src.models import AgentResponse, ConversationContext
 from src.services.bedrock_client import BedrockClient
-from src.services.diagram_validator import validate_mermaid_syntax
+from src.services.diagram_validator import sanitize_mermaid_syntax, validate_mermaid_syntax
 from src.utils import logger
 
 DIAGRAM_GENERATOR_PROMPT = """
@@ -282,7 +282,28 @@ class DiagramGenerator:
             latest_user_msg = next(
                 (m.content for m in reversed(recent_messages) if m.role == "user"), ""
             )
-            prompt = f"""{type_directive}You are MODIFYING an existing architecture diagram. Do NOT create a new diagram from scratch.
+
+            # Dedicated fix path when the user reports a syntax error
+            is_fix_request = "syntax error" in latest_user_msg.lower()
+            if is_fix_request:
+                prompt = f"""{type_directive}The following Mermaid.js diagram has syntax errors that prevent rendering.
+Fix ALL syntax issues while preserving the diagram's meaning and structure.
+
+Common Mermaid.js syntax errors to check and fix:
+- Node IDs must be alphanumeric + underscores only (replace hyphens with underscores)
+- Labels with special characters (parentheses, ampersands, slashes) must be in double quotes
+- Arrow syntax must be valid: -->, -.-> , ==>, not -> or -- text -->
+- Every subgraph must have a matching 'end'
+- Sequence diagram participants must be declared before use
+- No trailing semicolons
+- No HTML tags or markdown inside node labels
+
+BROKEN DIAGRAM:
+{context.current_diagram}
+
+Output ONLY the fixed Mermaid.js syntax. No explanation, no code fences."""
+            else:
+                prompt = f"""{type_directive}You are MODIFYING an existing architecture diagram. Do NOT create a new diagram from scratch.
 
 TASK: Apply ONLY the change described in the change request below.
 
@@ -357,6 +378,9 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3].strip()
 
+        # Sanitize common syntax issues before validation
+        cleaned = sanitize_mermaid_syntax(cleaned)
+
         # Validate and retry once if invalid
         state = validate_mermaid_syntax(cleaned)
         if not state.is_valid:
@@ -383,6 +407,7 @@ Output ONLY valid Mermaid.js syntax. Do not wrap in code fences. Do not include 
                 if retried.endswith("```"):
                     retried = retried[:-3].strip()
 
+                retried = sanitize_mermaid_syntax(retried)
                 retry_state = validate_mermaid_syntax(retried)
                 if retry_state.is_valid:
                     cleaned = retried

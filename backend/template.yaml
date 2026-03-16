@@ -298,6 +298,83 @@ Resources:
             Status: Enabled
             ExpirationInDays: 30
 
+  # ─── Frontend Static Hosting ───
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub archflow-frontend-${Environment}-${AWS::AccountId}
+      WebsiteConfiguration:
+        IndexDocument: index.html
+        ErrorDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub arn:aws:s3:::${FrontendBucket}/*
+
+  # ─── Voice Server IAM Roles (for ECS Fargate + App Runner) ───
+  VoiceServerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub archflow-voice-server-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - tasks.apprunner.amazonaws.com
+                - ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonBedrockFullAccess
+      Policies:
+        - PolicyName: VoiceServerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:Query
+                Resource:
+                  - !GetAtt ConversationsTable.Arn
+                  - !Sub ${ConversationsTable.Arn}/index/*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource:
+                  - !Sub arn:aws:s3:::${UploadsBucket}/*
+
+  VoiceServerAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub archflow-voice-ecr-access-${Environment}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: build.apprunner.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
 Outputs:
   WebSocketUrl:
     Description: WebSocket API URL (text chat)
@@ -314,3 +391,15 @@ Outputs:
   UsersTableName:
     Description: Users DynamoDB table name
     Value: !Ref UsersTable
+
+  FrontendUrl:
+    Description: Frontend website URL
+    Value: !GetAtt FrontendBucket.WebsiteURL
+
+  VoiceServerRoleArn:
+    Description: Voice server IAM role ARN (for App Runner instance role)
+    Value: !GetAtt VoiceServerRole.Arn
+
+  VoiceServerAccessRoleArn:
+    Description: Voice server ECR access role ARN (for App Runner source config)
+    Value: !GetAtt VoiceServerAccessRole.Arn

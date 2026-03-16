@@ -12,9 +12,9 @@ export function DiagramCanvas() {
   const wsSend = useConversationStore((s) => s._wsSend);
   const setLoading = useUIStore((s) => s.setLoading);
 
-  const handleAskToFix = (errorMessage: string) => {
+  const handleAskToFix = (_errorMessage: string) => {
     if (!wsSend) return;
-    const fixRequest = `The diagram has a syntax error: "${errorMessage}". Please fix the Mermaid syntax and return a corrected diagram.`;
+    const fixRequest = `The diagram has a syntax error and fails to render. Please fix the Mermaid syntax. Common fixes needed: ensure node IDs use only alphanumeric characters and underscores (no hyphens), wrap labels containing special characters in double quotes, use correct arrow syntax (-->), and ensure every subgraph has a matching end. Return a corrected diagram.`;
 
     addMessage({
       role: 'user',

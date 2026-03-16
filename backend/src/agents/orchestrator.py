@@ -179,6 +179,14 @@ class OrchestratorAgent:
             extra={"session_id": context.session_id, "message_length": len(message)},
         )
 
+        # Fast-path: diagram fix requests bypass intent classification
+        if "syntax error" in message.lower() and context.current_diagram:
+            logger.info("Fix-diagram fast path: bypassing intent classification")
+            context.metadata["diagram_subtype"] = context.metadata.get(
+                "diagram_subtype", "ARCHITECTURE"
+            )
+            return await self.agents["generator"].process(context)
+
         try:
             intent = await self.analyze_intent(message, context)
         except Exception:

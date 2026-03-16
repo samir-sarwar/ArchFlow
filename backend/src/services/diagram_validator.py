@@ -29,6 +29,121 @@ _MERMAID_KEYWORDS = frozenset({
 _NODE_DEF_RE = re.compile(r"\b(\w+)\s*[\[\({<]")
 _ARROW_SOURCE_RE = re.compile(r"\b(\w+)\s*(?:-->|---|\.->|===>|--o|--x|==>|-\.-)")
 
+# Matches a node ID with hyphens (e.g., api-gateway, my-service-name) in
+# node-definition or arrow-source positions — but NOT inside quoted strings.
+_HYPHENATED_ID_RE = re.compile(r"\b([a-zA-Z]\w*(?:-\w+)+)\b")
+
+# Matches flowchart labels like [Label (v2)] that contain special chars but aren't quoted
+_UNQUOTED_LABEL_RE = re.compile(r'(\[)([^\]"]*[()&/][^\]"]*?)(\])')
+
+# Matches -- text --> (invalid) to be replaced with -->|text|
+_INVALID_LABEL_ARROW_RE = re.compile(r'--\s+([^-][^>]*?)\s+-->')
+
+# Matches single-dash arrow -> (invalid in flowcharts), but not -.-> or -->
+_SINGLE_ARROW_RE = re.compile(r'(?<![-.])\s*->\s*(?!>)')
+
+
+def sanitize_mermaid_syntax(syntax: str) -> str:
+    """Apply deterministic fixes to common AI-generated Mermaid syntax errors."""
+    if not syntax or not syntax.strip():
+        return syntax
+
+    lines = syntax.strip().splitlines()
+    first_line = lines[0].strip().lower()
+    is_flowchart = first_line.startswith(("flowchart", "graph"))
+    is_sequence = first_line.startswith("sequencediagram")
+
+    result_lines: list[str] = []
+    declared_participants: set[str] = set()
+    used_participants: list[str] = []
+
+    for i, line in enumerate(lines):
+        # Skip comments
+        if line.strip().startswith("%%"):
+            result_lines.append(line)
+            continue
+
+        # Strip trailing semicolons
+        if line.rstrip().endswith(";"):
+            line = line.rstrip()[:-1]
+
+        if is_flowchart or (not is_sequence and i > 0):
+            # Replace hyphens in node IDs with underscores (skip quoted regions and arrows)
+            # Process segments outside of quotes
+            segments = []
+            in_quote = False
+            current = []
+            for ch in line:
+                if ch == '"':
+                    if in_quote:
+                        current.append(ch)
+                        segments.append("".join(current))
+                        current = []
+                        in_quote = False
+                    else:
+                        segments.append("".join(current))
+                        current = [ch]
+                        in_quote = True
+                else:
+                    current.append(ch)
+            if current:
+                segments.append("".join(current))
+
+            fixed_segments = []
+            for seg in segments:
+                if seg.startswith('"'):
+                    fixed_segments.append(seg)  # preserve quoted text
+                else:
+                    # Replace hyphens in identifiers, but not in arrow syntax (--> -.-> etc.)
+                    def _fix_id(m: re.Match) -> str:
+                        ident = m.group(1)
+                        # Don't touch arrow-like patterns
+                        start = m.start(1)
+                        if start > 0:
+                            before = seg[max(0, start - 2):start]
+                            if before.endswith("-") or before.endswith("."):
+                                return m.group(0)
+                        return m.group(0).replace(ident, ident.replace("-", "_"))
+
+                    fixed_segments.append(_HYPHENATED_ID_RE.sub(_fix_id, seg))
+            line = "".join(fixed_segments)
+
+            # Wrap unquoted labels with special chars in double quotes
+            line = _UNQUOTED_LABEL_RE.sub(lambda m: f'{m.group(1)}"{m.group(2)}"{m.group(3)}', line)
+
+            # Fix -- text --> to -->|text|
+            line = _INVALID_LABEL_ARROW_RE.sub(lambda m: f'-->|{m.group(1).strip()}|', line)
+
+            # Fix single-dash arrow -> to -->
+            if "->" in line and "-->" not in line and "->>" not in line:
+                line = _SINGLE_ARROW_RE.sub(" --> ", line)
+
+        # Track sequence diagram participants
+        if is_sequence and i > 0:
+            stripped = line.strip()
+            if stripped.startswith("participant "):
+                name = stripped.split()[1] if len(stripped.split()) > 1 else ""
+                if name:
+                    declared_participants.add(name.rstrip(":"))
+            else:
+                # Check for actor->>actor patterns
+                msg_match = re.match(r'\s*(\w+)\s*->>[\s+\-]*(\w+)', stripped)
+                if msg_match:
+                    for p in (msg_match.group(1), msg_match.group(2)):
+                        if p not in declared_participants and p not in used_participants:
+                            used_participants.append(p)
+
+        result_lines.append(line)
+
+    # Auto-declare missing participants in sequence diagrams
+    if is_sequence and used_participants:
+        insert_pos = 1  # after "sequenceDiagram" line
+        for p in used_participants:
+            result_lines.insert(insert_pos, f"    participant {p}")
+            insert_pos += 1
+
+    return "\n".join(result_lines)
+
 
 def validate_mermaid_syntax(syntax: str) -> DiagramState:
     """
