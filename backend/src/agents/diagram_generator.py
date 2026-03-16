@@ -17,11 +17,13 @@ Output rules:
 - Always output valid Mermaid.js syntax
 - Use descriptive node IDs (e.g., `api_gateway` not `A`)
 - Scale node count to the complexity of the architecture described. \
-For simple systems (3-5 services), 5-8 nodes is right. \
-For complex multi-tier systems, 15-25+ nodes may be appropriate. \
+For simple systems (3-5 services), 8-12 nodes is right. \
+For moderate systems, 15-30 nodes is appropriate. \
+For complex multi-tier systems, 30-50+ nodes may be appropriate. \
 Group minor ancillary components rather than omitting them, \
 but never add nodes that the conversation did not mention.
-- Keep the diagram to what a reader can absorb in 10 seconds
+- Prioritise completeness — include all components the user described rather than \
+collapsing them for brevity
 
 Diagram type — match the diagram structure to the user's intent:
 
@@ -61,7 +63,7 @@ Detail level — respond to depth cues in the user's request:
   - Identify nodes that represent high-level abstractions (e.g., "Backend", "Auth Service")
   - Replace them with subgraphs containing their internal components
   - Add intermediate steps between existing nodes (e.g., validation, caching, transformation)
-  - Increase node count by roughly 50-100% relative to the current diagram
+  - Increase node count by roughly 75-150% relative to the current diagram
   - Preserve the overall structure — deepening adds WITHIN existing groups, not beside them
 - When the user says "simplify", "high level", "overview", "zoom out", or "more abstract":
   - Collapse subgraphs into single representative nodes

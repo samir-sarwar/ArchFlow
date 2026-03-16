@@ -16,6 +16,9 @@ When asking questions:
 - Prioritize questions about scale, reliability, and constraints
 - Acknowledge what you already know before asking more
 - Be conversational, not interrogative
+- PLAIN TEXT ONLY — do NOT use any markdown formatting. No hashtags (#) for headings, \
+no asterisks (* or **) for bold/italic, no backticks for code. Write naturally using \
+plain dashes for lists and line breaks for structure.
 
 Question categories to cover:
 1. Scale: Expected users, data volume, growth rate

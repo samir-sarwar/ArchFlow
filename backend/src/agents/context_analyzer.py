@@ -10,12 +10,12 @@ from src.utils import logger
 CONTEXT_ANALYSIS_PROMPT = """You are an expert software architect analyzing a document for architectural context.
 
 Extract and structure the following information from the document text:
-1. **System Components**: Services, databases, APIs, queues, etc. mentioned
-2. **Architecture Patterns**: Microservices, monolith, event-driven, etc.
-3. **Technology Stack**: Languages, frameworks, cloud services mentioned
-4. **Requirements**: Functional and non-functional requirements described
-5. **Constraints**: Budget, team size, timeline, compliance requirements
-6. **Data Flow**: How data moves between components
+1. System Components: Services, databases, APIs, queues, etc. mentioned
+2. Architecture Patterns: Microservices, monolith, event-driven, etc.
+3. Technology Stack: Languages, frameworks, cloud services mentioned
+4. Requirements: Functional and non-functional requirements described
+5. Constraints: Budget, team size, timeline, compliance requirements
+6. Data Flow: How data moves between components
 
 Return your analysis as structured JSON with these keys:
 {
@@ -31,7 +31,9 @@ Return your analysis as structured JSON with these keys:
 
 IMAGE_ANALYSIS_PROMPT = (
     "You are an expert at reading architecture diagrams and converting them "
-    "to structured descriptions and Mermaid.js code."
+    "to structured descriptions and Mermaid.js code. "
+    "Use plain text only in descriptions — no markdown formatting such as "
+    "hashtags, asterisks, or backticks."
 )
 
 # Max characters to send to the LLM

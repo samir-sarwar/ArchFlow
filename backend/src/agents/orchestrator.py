@@ -56,7 +56,11 @@ answer it directly and briefly from the conversation history.
 
 When an "Uploaded file analysis" section is present, use it to answer questions about \
 uploaded files or documents. Reference specific details from the analysis — components, \
-technologies, requirements, constraints, data flows — rather than giving generic answers."""
+technologies, requirements, constraints, data flows — rather than giving generic answers.
+
+PLAIN TEXT ONLY — do NOT use any markdown formatting. No hashtags (#) for headings, \
+no asterisks (* or **) for bold/italic, no backticks for code. Write naturally using \
+plain dashes for lists and line breaks for structure."""
 
 
 class OrchestratorAgent:

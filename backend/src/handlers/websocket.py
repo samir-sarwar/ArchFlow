@@ -17,6 +17,7 @@ from src.services.bedrock_client import BedrockClient
 from src.services.diagram_validator import validate_mermaid_syntax
 from src.services.state_manager import ConversationStateManager
 from src.utils import SessionExpiredError, SessionNotFoundError, logger
+from src.utils.text_sanitizer import strip_markdown
 
 state_manager = ConversationStateManager()
 
@@ -136,7 +137,7 @@ def _handle_text_message(body, connection_id, session_id):
         loop.close()
 
     # Guard against empty responses (e.g. model spent tokens on reasoning only)
-    response_text = response["text"]
+    response_text = strip_markdown(response["text"])
     if not response_text or not response_text.strip():
         logger.warning("Empty response from agent=%s, sending fallback", response["agent"])
         response_text = (
