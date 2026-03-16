@@ -21,6 +21,8 @@ class DiagramVersion(BaseModel):
 
 class ConversationContext(BaseModel):
     session_id: str
+    user_id: Optional[str] = None
+    title: Optional[str] = None
     created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     last_activity: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     messages: List[Message] = Field(default_factory=list)

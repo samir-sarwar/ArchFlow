@@ -20,26 +20,35 @@ class ConversationStateManager:
         )
         self.table = dynamodb.Table(table_name)
 
-    async def create_session(self, session_id: str | None = None) -> str:
+    async def create_session(
+        self,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        title: str | None = None,
+    ) -> str:
         """Create a new conversation session."""
         if session_id is None:
             session_id = str(uuid.uuid4())
         now = datetime.utcnow().isoformat()
 
-        self.table.put_item(
-            Item={
-                "session_id": session_id,
-                "created_at": now,
-                "last_activity": now,
-                "messages": [],
-                "current_diagram": None,
-                "diagram_versions": [],
-                "uploaded_files": [],
-                "metadata": {"requirements": {}, "architecture_decisions": []},
-            }
-        )
+        item = {
+            "session_id": session_id,
+            "created_at": now,
+            "last_activity": now,
+            "messages": [],
+            "current_diagram": None,
+            "diagram_versions": [],
+            "uploaded_files": [],
+            "metadata": {"requirements": {}, "architecture_decisions": []},
+        }
+        if user_id:
+            item["user_id"] = user_id
+        if title:
+            item["title"] = title
 
-        logger.info("Session created", extra={"session_id": session_id})
+        self.table.put_item(Item=item)
+
+        logger.info("Session created", extra={"session_id": session_id, "user_id": user_id})
         return session_id
 
     async def get_session(self, session_id: str) -> ConversationContext:
@@ -52,10 +61,12 @@ class ConversationStateManager:
             raise SessionNotFoundError(session_id)
 
         item = response["Item"]
-        last_activity = datetime.fromisoformat(item["last_activity"])
 
-        if datetime.utcnow() - last_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
-            raise SessionExpiredError()
+        # Skip timeout for authenticated sessions
+        if not item.get("user_id"):
+            last_activity = datetime.fromisoformat(item["last_activity"])
+            if datetime.utcnow() - last_activity > timedelta(minutes=SESSION_TIMEOUT_MINUTES):
+                raise SessionExpiredError()
 
         return ConversationContext(**item)
 
@@ -111,3 +122,31 @@ class ConversationStateManager:
                 ":empty_list": [],
             },
         )
+
+    async def update_title(self, session_id: str, title: str) -> None:
+        """Set the conversation title."""
+        self.table.update_item(
+            Key={"session_id": session_id},
+            UpdateExpression="SET title = :t",
+            ExpressionAttributeValues={":t": title},
+        )
+
+    async def list_user_conversations(self, user_id: str, limit: int = 50) -> list:
+        """List conversations for a user, most recent first."""
+        response = self.table.query(
+            IndexName="user-conversations-index",
+            KeyConditionExpression="user_id = :uid",
+            ExpressionAttributeValues={":uid": user_id},
+            ScanIndexForward=False,
+            Limit=limit,
+        )
+        return response.get("Items", [])
+
+    async def delete_conversation(self, session_id: str, user_id: str) -> None:
+        """Delete a conversation, verifying ownership."""
+        response = self.table.get_item(Key={"session_id": session_id})
+        if "Item" not in response:
+            raise SessionNotFoundError(session_id)
+        if response["Item"].get("user_id") != user_id:
+            raise ValueError("Not authorized to delete this conversation")
+        self.table.delete_item(Key={"session_id": session_id})
