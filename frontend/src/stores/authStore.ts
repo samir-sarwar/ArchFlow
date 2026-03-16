@@ -1,0 +1,49 @@
+import { create } from 'zustand';
+
+interface User {
+  user_id: string;
+  email: string;
+  display_name: string;
+}
+
+interface AuthStore {
+  user: User | null;
+  token: string | null;
+  isAuthenticated: boolean;
+
+  login: (token: string, user: User) => void;
+  logout: () => void;
+  loadFromStorage: () => void;
+}
+
+export const useAuthStore = create<AuthStore>((set) => ({
+  user: null,
+  token: null,
+  isAuthenticated: false,
+
+  login: (token, user) => {
+    localStorage.setItem('archflow_token', token);
+    localStorage.setItem('archflow_user', JSON.stringify(user));
+    set({ token, user, isAuthenticated: true });
+  },
+
+  logout: () => {
+    localStorage.removeItem('archflow_token');
+    localStorage.removeItem('archflow_user');
+    localStorage.removeItem('archflow_sessionId');
+    set({ token: null, user: null, isAuthenticated: false });
+  },
+
+  loadFromStorage: () => {
+    const token = localStorage.getItem('archflow_token');
+    const userJson = localStorage.getItem('archflow_user');
+    if (token && userJson) {
+      try {
+        const user = JSON.parse(userJson);
+        set({ token, user, isAuthenticated: true });
+      } catch {
+        set({ token: null, user: null, isAuthenticated: false });
+      }
+    }
+  },
+}));
