@@ -84,13 +84,13 @@ export function useConversation() {
   }, [isConnected]);
 
   // ── Repo analysis polling ──
-  const startRepoPolling = (repoUrl: string) => {
+  const startRepoPolling = (repoUrl: string, explicitSessionId?: string) => {
     // Clear any existing polling
     if (repoPollingRef.current) {
       clearInterval(repoPollingRef.current);
     }
     let attempts = 0;
-    const maxAttempts = 30; // ~90 seconds at 3s intervals
+    const maxAttempts = 60; // ~3 minutes at 3s intervals
     repoPollingRef.current = setInterval(() => {
       attempts += 1;
       if (attempts > maxAttempts) {
@@ -102,7 +102,7 @@ export function useConversation() {
       }
       wsSend({
         action: 'check_repo_status',
-        sessionId: conversationStore.sessionId || '',
+        sessionId: explicitSessionId || useConversationStore.getState().sessionId || '',
         repoUrl,
       });
     }, 3000);
@@ -253,12 +253,20 @@ export function useConversation() {
           repoUrl?: string;
           repoName?: string;
           summary?: string;
+          contextPreview?: string;
         };
+
+        // Build message with context preview for debugging
+        let content = `**Repository analyzed: ${p.repoName || 'repo'}**\n\n${p.summary || 'Analysis complete. You can now ask questions about this repository or request architecture diagrams based on it.'}`;
+        if (p.contextPreview) {
+          content += `\n\n<details><summary>Context Preview (what the AI sees)</summary>\n\n\`\`\`\n${p.contextPreview}\n\`\`\`\n\n</details>`;
+        }
+
         const analysisMsg: Message = {
           role: 'assistant',
-          content: `**Repository analyzed: ${p.repoName || 'repo'}**\n\n${p.summary || 'Analysis complete. You can now ask questions about this repository or request architecture diagrams based on it.'}`,
+          content,
           timestamp: new Date().toISOString(),
-          agent: 'context_analyzer',
+          agent: 'repo_analyzer',
         };
         conversationStore.addMessage(analysisMsg);
         if (data.sessionId) {
@@ -279,14 +287,15 @@ export function useConversation() {
           role: 'assistant',
           content: `Analyzing repository: **${p.repoName || p.repoUrl}**... This may take a moment.`,
           timestamp: new Date().toISOString(),
-          agent: 'context_analyzer',
+          agent: 'repo_analyzer',
         };
         conversationStore.addMessage(analysisMsg);
         if (data.sessionId) {
           conversationStore.setSessionId(data.sessionId as string);
         }
-        // Start polling for results
-        startRepoPolling(p.repoUrl || '');
+        // Start polling for results — pass sessionId explicitly to avoid stale closure
+        const sid = (data.sessionId as string) || useConversationStore.getState().sessionId || '';
+        startRepoPolling(p.repoUrl || '', sid);
       }
 
       // repo_analysis_pending — no-op, keep polling
@@ -363,7 +372,7 @@ export function useConversation() {
 
         const sent = wsSend({
           action: 'github_repo',
-          sessionId: conversationStore.sessionId || '',
+          sessionId: useConversationStore.getState().sessionId || '',
           repoUrl,
         });
 
@@ -448,12 +457,10 @@ export function useConversation() {
     promptNameRef.current = promptName;
     audioContentNameRef.current = audioContentName;
 
-    let currentSessionId = conversationStore.sessionId;
+    let currentSessionId = useConversationStore.getState().sessionId;
     if (!currentSessionId) {
       currentSessionId = crypto.randomUUID();
       conversationStore.setSessionId(currentSessionId);
-      // Notify text backend to create this session if it doesn't exist
-      wsSend({ action: 'restore_session', sessionId: currentSessionId });
     }
 
 
