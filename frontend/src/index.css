@@ -36,24 +36,24 @@ html.dark body {
   .glass-dark {
     backdrop-filter: blur(24px) saturate(180%);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(255, 255, 255, 0.7);
     border: 1px solid rgba(0, 0, 0, 0.08);
   }
 
   .dark .glass-dark {
-    background: rgba(10, 10, 26, 0.85);
+    background: rgba(10, 10, 26, 0.7);
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
 
   .glass-input {
     backdrop-filter: blur(20px) saturate(180%);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.65);
     border: 1px solid rgba(0, 0, 0, 0.1);
   }
 
   .dark .glass-input {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.12);
   }
 
@@ -110,17 +110,47 @@ html.dark .diagram-grid {
 }
 
 /* Mermaid syntax highlighting tokens */
-.mermaid-keyword { color: #8b5cf6; font-weight: 600; }
-.mermaid-arrow   { color: #f59e0b; }
-.mermaid-string  { color: #10b981; }
-.mermaid-comment { color: #6b7280; font-style: italic; }
-.mermaid-bracket { color: #3b82f6; }
+.mermaid-keyword {
+  color: #8b5cf6;
+  font-weight: 600;
+}
 
-html.dark .mermaid-keyword { color: #a78bfa; }
-html.dark .mermaid-arrow   { color: #fbbf24; }
-html.dark .mermaid-string  { color: #34d399; }
-html.dark .mermaid-comment { color: #9ca3af; }
-html.dark .mermaid-bracket { color: #60a5fa; }
+.mermaid-arrow {
+  color: #f59e0b;
+}
+
+.mermaid-string {
+  color: #10b981;
+}
+
+.mermaid-comment {
+  color: #6b7280;
+  font-style: italic;
+}
+
+.mermaid-bracket {
+  color: #3b82f6;
+}
+
+html.dark .mermaid-keyword {
+  color: #a78bfa;
+}
+
+html.dark .mermaid-arrow {
+  color: #fbbf24;
+}
+
+html.dark .mermaid-string {
+  color: #34d399;
+}
+
+html.dark .mermaid-comment {
+  color: #9ca3af;
+}
+
+html.dark .mermaid-bracket {
+  color: #60a5fa;
+}
 
 /* Syntax highlight overlay: textarea + pre share identical metrics */
 .code-editor-shared {
@@ -140,6 +170,7 @@ html.dark .mermaid-bracket { color: #60a5fa; }
 .code-editor-overlay::selection {
   background: rgba(139, 92, 246, 0.25);
 }
+
 .code-editor-overlay::-moz-selection {
   background: rgba(139, 92, 246, 0.25);
 }

@@ -31,29 +31,27 @@ export function ChatOverlay() {
   if (!hasContent) return null;
 
   return (
-    <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4 animate-slide-up">
-      <div className="glass-dark rounded-2xl overflow-hidden shadow-2xl shadow-gray-300/30 dark:shadow-black/30">
+    <div className="fixed bottom-32 left-1/2 -translate-x-1/2 z-20 w-full max-w-2xl px-4 animate-slide-up">
+      <div className="glass-input rounded-2xl overflow-hidden shadow-2xl shadow-gray-300/30 dark:shadow-black/30">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 dark:border-white/5">
           <div className="flex items-center gap-2">
             <div className="flex bg-gray-100 dark:bg-white/5 rounded-full p-0.5">
               <button
                 onClick={() => setViewMode('chat')}
-                className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                  viewMode === 'chat'
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/40 dark:text-primary-300 font-medium'
-                    : 'text-gray-400 hover:text-gray-600 dark:text-white/40 dark:hover:text-white/60'
-                }`}
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${viewMode === 'chat'
+                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/40 dark:text-primary-300 font-medium'
+                  : 'text-gray-400 hover:text-gray-600 dark:text-white/40 dark:hover:text-white/60'
+                  }`}
               >
                 Chat
               </button>
               <button
                 onClick={() => setViewMode('transcript')}
-                className={`px-3 py-1 text-xs rounded-full transition-colors ${
-                  viewMode === 'transcript'
-                    ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/40 dark:text-primary-300 font-medium'
-                    : 'text-gray-400 hover:text-gray-600 dark:text-white/40 dark:hover:text-white/60'
-                }`}
+                className={`px-3 py-1 text-xs rounded-full transition-colors ${viewMode === 'transcript'
+                  ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/40 dark:text-primary-300 font-medium'
+                  : 'text-gray-400 hover:text-gray-600 dark:text-white/40 dark:hover:text-white/60'
+                  }`}
               >
                 Transcript
               </button>
@@ -75,11 +73,10 @@ export function ChatOverlay() {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div
-                className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-primary-100 text-primary-900 border border-primary-200 dark:bg-primary-600/30 dark:text-primary-100 dark:border-primary-500/20'
-                    : 'bg-gray-100 text-gray-700 border border-gray-200 dark:bg-white/5 dark:text-white/80 dark:border-white/5'
-                }`}
+                className={`max-w-[80%] rounded-xl px-3 py-2 text-sm ${msg.role === 'user'
+                  ? 'bg-primary-100 text-primary-900 border border-primary-200 dark:bg-primary-600/30 dark:text-primary-100 dark:border-primary-500/20'
+                  : 'bg-gray-100 text-gray-700 border border-gray-200 dark:bg-white/5 dark:text-white/80 dark:border-white/5'
+                  }`}
               >
                 {msg.agent && (
                   <span className="text-xs text-primary-500 dark:text-primary-400/60 block mb-1">

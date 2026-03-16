@@ -41,7 +41,7 @@ export function FileList({ files, onRemove }: FileListProps) {
   if (files.length === 0) return null;
 
   return (
-    <div className="fixed top-[56px] right-4 z-20 animate-fade-in flex flex-col items-end gap-2">
+    <div className="fixed top-[68px] right-4 z-20 animate-fade-in flex flex-col items-end gap-2">
       {/* Toggle button */}
       <button
         onClick={() => setCollapsed((c) => !c)}
