@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const MAX_RECONNECT_DELAY = 10_000;
 const INITIAL_RECONNECT_DELAY = 1_000;
 
-export function useWebSocket(url: string, onMessage?: (event: MessageEvent) => void) {
+export function useWebSocket(url: string, onMessage?: (event: MessageEvent) => void, token?: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<MessageEvent | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -25,7 +25,8 @@ export function useWebSocket(url: string, onMessage?: (event: MessageEvent) => v
       return;
     }
 
-    const ws = new WebSocket(url);
+    const wsUrl = token ? `${url}?token=${encodeURIComponent(token)}` : url;
+    const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
       if (!mountedRef.current) {
@@ -61,7 +62,7 @@ export function useWebSocket(url: string, onMessage?: (event: MessageEvent) => v
     };
 
     wsRef.current = ws;
-  }, [url]);
+  }, [url, token]);
 
   useEffect(() => {
     mountedRef.current = true;

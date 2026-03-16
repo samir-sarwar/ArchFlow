@@ -15,11 +15,13 @@ from src.agents import (
 from src.models import ConversationContext, Message
 from src.services.bedrock_client import BedrockClient
 from src.services.diagram_validator import validate_mermaid_syntax
+from src.services.auth_service import AuthService
 from src.services.state_manager import ConversationStateManager
 from src.utils import SessionExpiredError, SessionNotFoundError, logger
 from src.utils.text_sanitizer import strip_markdown
 
 state_manager = ConversationStateManager()
+auth_service = AuthService()
 
 # Initialize agents (shared across Lambda invocations via warm starts)
 bedrock = BedrockClient()
@@ -33,6 +35,18 @@ orchestrator = OrchestratorAgent(
         "context": ContextAnalyzer(bedrock_client=bedrock),
     },
 )
+
+
+def _get_user_id(body: dict) -> str | None:
+    """Extract and verify JWT from message body. Returns user_id or None."""
+    token = body.get("token")
+    if not token:
+        return None
+    try:
+        info = auth_service.verify_token(token)
+        return info["user_id"]
+    except ValueError:
+        return None
 
 
 def lambda_handler(event, context):
@@ -107,6 +121,11 @@ def handle_message(event, connection_id):
     if action == "check_repo_status":
         return _handle_check_repo_status(body, connection_id, session_id)
 
+    if action == "list_conversations":
+        return _handle_list_conversations(body)
+
+    if action == "delete_conversation":
+        return _handle_delete_conversation(body)
 
     # Default: text chat message
     return _handle_text_message(body, connection_id, session_id)
@@ -122,10 +141,12 @@ def _handle_text_message(body, connection_id, session_id):
             "payload": {"message": "No text provided."},
         })}
 
+    user_id = _get_user_id(body)
+
     loop = asyncio.new_event_loop()
     try:
         response = loop.run_until_complete(
-            _process_message(session_id, text, current_diagram=body.get("currentDiagram"))
+            _process_message(session_id, text, current_diagram=body.get("currentDiagram"), user_id=user_id)
         )
     except Exception:
         logger.error("Text message processing failed", exc_info=True)
@@ -187,6 +208,8 @@ def _handle_restore_session(body, connection_id, session_id):
             "payload": {"message": "No sessionId provided for restore."},
         })}
 
+    user_id = _get_user_id(body)
+
     loop = asyncio.new_event_loop()
     session_created_fresh = False
     loop_closed = False
@@ -194,10 +217,17 @@ def _handle_restore_session(body, connection_id, session_id):
         context = loop.run_until_complete(
             state_manager.get_session(session_id)
         )
+        # Claim session for authenticated user if not already claimed
+        if user_id and not context.user_id:
+            loop.run_until_complete(
+                state_manager.update_session(session_id, {"user_id": user_id})
+            )
     except SessionNotFoundError:
         # No existing data — safe to create a blank session
         try:
-            loop.run_until_complete(state_manager.create_session(session_id=session_id))
+            loop.run_until_complete(
+                state_manager.create_session(session_id=session_id, user_id=user_id)
+            )
         except Exception:
             pass
         session_created_fresh = True
@@ -238,16 +268,31 @@ def _handle_restore_session(body, connection_id, session_id):
 
 
 async def _process_message(
-    session_id: str | None, text: str, current_diagram: str | None = None
+    session_id: str | None,
+    text: str,
+    current_diagram: str | None = None,
+    user_id: str | None = None,
 ) -> dict:
     """Process a user message through the orchestrator."""
     if session_id:
         context = await state_manager.get_session(session_id)
+        # Claim session for authenticated user if not already claimed
+        if user_id and not context.user_id:
+            await state_manager.update_session(session_id, {"user_id": user_id})
+            context.user_id = user_id
     else:
-        session_id = await state_manager.create_session()
+        session_id = await state_manager.create_session(user_id=user_id)
         # Construct context directly instead of reading back from DynamoDB
         # to avoid eventually-consistent read missing the just-written item.
-        context = ConversationContext(session_id=session_id)
+        context = ConversationContext(session_id=session_id, user_id=user_id)
+
+    # Auto-generate title from first user message if session has none
+    if not context.title:
+        title = text[:60].strip()
+        if len(text) > 60:
+            title = title.rsplit(" ", 1)[0] + "..."
+        await state_manager.update_title(session_id, title)
+        context.title = title
 
     # Only use the frontend's diagram if the backend has none (fresh session).
     # Otherwise trust DynamoDB state — it may contain a voice AI diagram that
@@ -553,4 +598,73 @@ def _handle_check_repo_status(body, connection_id, session_id):
         "type": "repo_analysis_pending",
         "sessionId": session_id,
         "payload": {"repoUrl": repo_url, "repoName": repo_name},
+    })}
+
+
+def _handle_list_conversations(body):
+    """Return the authenticated user's conversation list."""
+    user_id = _get_user_id(body)
+    if not user_id:
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Authentication required."},
+        })}
+
+    loop = asyncio.new_event_loop()
+    try:
+        raw_items = loop.run_until_complete(
+            state_manager.list_user_conversations(user_id)
+        )
+        # Extract only needed fields and convert to plain strings
+        # (DynamoDB may return Decimal types that json.dumps can't serialize)
+        conversations = [
+            {
+                "session_id": str(item.get("session_id", "")),
+                "title": str(item.get("title", "Untitled")),
+                "last_activity": str(item.get("last_activity", "")),
+                "created_at": str(item.get("created_at", "")),
+            }
+            for item in raw_items
+        ]
+    except Exception:
+        logger.error("Failed to list conversations", exc_info=True)
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Failed to fetch conversations."},
+        })}
+    finally:
+        loop.close()
+
+    return {"statusCode": 200, "body": json.dumps({
+        "type": "conversations_list",
+        "payload": {"conversations": conversations},
+    })}
+
+
+def _handle_delete_conversation(body):
+    """Delete a conversation owned by the authenticated user."""
+    user_id = _get_user_id(body)
+    session_id = body.get("sessionId")
+    if not user_id or not session_id:
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Authentication required."},
+        })}
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(
+            state_manager.delete_conversation(session_id, user_id)
+        )
+    except (ValueError, SessionNotFoundError):
+        return {"statusCode": 200, "body": json.dumps({
+            "type": "error",
+            "payload": {"message": "Conversation not found or not authorized."},
+        })}
+    finally:
+        loop.close()
+
+    return {"statusCode": 200, "body": json.dumps({
+        "type": "conversation_deleted",
+        "payload": {"sessionId": session_id},
     })}
