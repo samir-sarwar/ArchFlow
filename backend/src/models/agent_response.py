@@ -9,7 +9,6 @@ class IntentType(str, Enum):
     ARCHITECTURE_ADVICE = "architecture_advice"
     MODIFY_DIAGRAM = "modify_diagram"
     ANALYZE_CONTEXT = "analyze_context"
-    MULTI_AGENT = "multi_agent"
     GENERAL = "general"
 
 

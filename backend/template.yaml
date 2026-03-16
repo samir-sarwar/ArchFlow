@@ -102,7 +102,6 @@ Resources:
       Timeout: 300
       Environment:
         Variables:
-          WEBSOCKET_API_ENDPOINT: !Sub https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
           REPO_ANALYZER_FUNCTION_NAME: !Ref RepoAnalyzerFunction
       Policies:
         - AmazonBedrockFullAccess
@@ -110,11 +109,6 @@ Resources:
             TableName: !Ref ConversationsTable
         - S3CrudPolicy:
             BucketName: !Ref UploadsBucket
-        - Statement:
-            - Effect: Allow
-              Action:
-                - execute-api:ManageConnections
-              Resource: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*
         - Statement:
             - Effect: Allow
               Action:
