@@ -3,6 +3,8 @@ import { useWebSocket } from './useWebSocket';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useAuthStore } from '@/stores/authStore';
+import { useChatHistoryStore, type ChatSummary } from '@/stores/chatHistoryStore';
 import { createChunkPlayer, playLPCMAudio, type AudioChunkPlayer } from '@/services/audio';
 import type { Message } from '@/types/conversation';
 
@@ -25,7 +27,8 @@ export function useConversation() {
   const handleIncomingRef = useRef<(data: Record<string, unknown>) => void>(() => { });
 
   // ── Two separate WebSocket connections ──
-  const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL);
+  const token = useAuthStore((s) => s.token);
+  const { isConnected, lastMessage, sendMessage: wsSend } = useWebSocket(WS_URL, undefined, token);
 
   // Voice WS uses direct onMessage callback to avoid React state batching
   // dropping rapid audio_chunk messages
@@ -41,7 +44,7 @@ export function useConversation() {
   const {
     isConnected: isVoiceConnected,
     sendMessage: voiceWsSend,
-  } = useWebSocket(VOICE_WS_URL, voiceOnMessage);
+  } = useWebSocket(VOICE_WS_URL, voiceOnMessage, token);
 
   // Cleanup audio player and polling on unmount
   useEffect(() => {
@@ -68,6 +71,13 @@ export function useConversation() {
   // Mid-session reconnects (e.g. after idle timeout during voice) keep live state.
   useEffect(() => {
     if (!isConnected) return;
+
+    // Fetch conversation list for authenticated users
+    const currentToken = useAuthStore.getState().token;
+    if (currentToken) {
+      wsSend({ action: 'list_conversations', token: currentToken });
+    }
+
     const savedSessionId = localStorage.getItem('archflow_sessionId');
     if (savedSessionId) {
       const currentMessages = useConversationStore.getState().messages;
@@ -78,6 +88,7 @@ export function useConversation() {
       wsSend({
         action: 'restore_session',
         sessionId: savedSessionId,
+        token: currentToken,
       });
       setLoading(true);
     }
@@ -104,6 +115,7 @@ export function useConversation() {
         action: 'check_repo_status',
         sessionId: explicitSessionId || useConversationStore.getState().sessionId || '',
         repoUrl,
+        token: useAuthStore.getState().token,
       });
     }, 3000);
   };
@@ -206,8 +218,19 @@ export function useConversation() {
         if (payload.currentDiagram) {
           restoreDiagram(payload.currentDiagram, (payload.diagramVersions as []) || []);
         }
+        useChatHistoryStore.getState().setActiveConversation(data.sessionId as string);
         clearTimeout(responseTimeoutRef.current);
         setLoading(false);
+      }
+
+      if (data.type === 'conversations_list') {
+        const payload = data.payload as { conversations: ChatSummary[] };
+        useChatHistoryStore.getState().setConversations(payload.conversations || []);
+      }
+
+      if (data.type === 'conversation_deleted') {
+        const payload = data.payload as { sessionId: string };
+        useChatHistoryStore.getState().removeConversation(payload.sessionId);
       }
 
       if (data.type === 'session_expired') {
@@ -374,6 +397,7 @@ export function useConversation() {
           action: 'github_repo',
           sessionId: useConversationStore.getState().sessionId || '',
           repoUrl,
+          token: useAuthStore.getState().token,
         });
 
         if (!sent) {
@@ -420,6 +444,7 @@ export function useConversation() {
         sessionId: conversationStore.sessionId,
         text: content,
         currentDiagram: currentDiagram || undefined,
+        token: useAuthStore.getState().token,
       });
     }
 

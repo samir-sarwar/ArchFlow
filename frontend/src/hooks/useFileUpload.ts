@@ -71,6 +71,7 @@ export function useFileUpload(sendWsMessage?: (msg: unknown) => void) {
           fileKey,
           fileName: file.name,
           contentType: file.type,
+          token: localStorage.getItem('archflow_token'),
         });
       } catch (err) {
         setFiles((prev) =>
