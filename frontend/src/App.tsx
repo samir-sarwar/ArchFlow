@@ -6,17 +6,25 @@ import { ChatOverlay } from '@/components/ChatOverlay';
 import { InputBar } from '@/components/InputBar';
 import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useUIStore } from '@/stores/uiStore';
+import { useAuthStore } from '@/stores/authStore';
 import { Toast } from '@/components/shared/Toast';
 import { Dropzone, FileList } from '@/components/FileUpload';
 import { useConversation } from '@/hooks/useConversation';
 import { useFileUpload } from '@/hooks/useFileUpload';
+import { AuthScreen } from '@/components/Auth/AuthScreen';
 
 export default function App() {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const notifications = useUIStore((s) => s.notifications);
   const removeNotification = useUIStore((s) => s.removeNotification);
   const theme = useUIStore((s) => s.theme);
   const { sendWsMessage, isConnected } = useConversation();
   const { files, uploadFile, removeFile } = useFileUpload(sendWsMessage);
+
+  // Load auth state from localStorage on mount
+  useEffect(() => {
+    useAuthStore.getState().loadFromStorage();
+  }, []);
 
   // Apply dark class to document root
   useEffect(() => {
@@ -30,6 +38,10 @@ export default function App() {
   const handleFilesSelected = (files: File[]) => {
     files.forEach(uploadFile);
   };
+
+  if (!isAuthenticated) {
+    return <AuthScreen />;
+  }
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-gray-50 dark:bg-surface-500">

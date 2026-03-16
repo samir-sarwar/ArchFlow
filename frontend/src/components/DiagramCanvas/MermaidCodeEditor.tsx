@@ -76,6 +76,7 @@ export function MermaidCodeEditor() {
         action: 'sync_diagram',
         sessionId,
         syntax: draft,
+        token: localStorage.getItem('archflow_token'),
       });
     }
   }, [draft, currentSyntax, updateDiagram, wsSend, sessionId]);
