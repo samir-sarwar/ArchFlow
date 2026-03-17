@@ -54,7 +54,7 @@ htmlcov/
 *.log
 
 
-README.md
+
 agent-context/
 docs/
 testing.sh
