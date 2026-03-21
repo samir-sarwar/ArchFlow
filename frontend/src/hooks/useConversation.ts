@@ -333,6 +333,14 @@ export function useConversation() {
       }
 
       if (data.type === 'error') {
+        const errorMessage = (data.payload as { message: string }).message;
+
+        // Expired/invalid token — auto-logout so user sees login screen
+        if (errorMessage === 'Authentication required.') {
+          useAuthStore.getState().logout();
+          return;
+        }
+
         // Stop repo polling on error
         if (repoPollingRef.current) {
           clearInterval(repoPollingRef.current);
@@ -349,7 +357,7 @@ export function useConversation() {
           conversationStore.updateLastUserMessage('[Voice message failed]');
         }
 
-        setError((data.payload as { message: string }).message);
+        setError(errorMessage);
         setLoading(false);
       }
     },

@@ -1,12 +1,16 @@
 # ArchFlow
 
-**Voice-first AI architecture diagram designer.** Speak your requirements, get real-time system architecture diagrams powered by Amazon Nova foundation models.
+**Voice-first AI architecture diagram designer.** Speak your requirements, get real-time system architecture diagrams powered by Amazon Nova foundation models. (Note: Live site is down due to no aws credits.)
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue)
 ![React](https://img.shields.io/badge/React-18.2-61DAFB)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-3178C6)
 ![AWS SAM](https://img.shields.io/badge/AWS-SAM-FF9900)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-06B6D4)
+
+---
+
+<video src="202603211326.mp4" controls width="100%"></video>
 
 ---
 
