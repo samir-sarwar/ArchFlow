@@ -4,6 +4,7 @@ import { LoadingSpinner } from '@/components/shared/LoadingSpinner';
 import { useDiagramStore } from '@/stores/diagramStore';
 import { useUIStore } from '@/stores/uiStore';
 import { validateMermaidSyntax } from '@/utils/validateMermaid';
+import { setPlaybackMuted } from '@/services/audio';
 
 interface MermaidRendererProps {
   syntax: string;
@@ -237,9 +238,31 @@ export function MermaidRenderer({
 /* ---------- Zoom Control Buttons ---------- */
 function ZoomControls({ onFitToView }: { onFitToView: () => void }) {
   const { zoomIn, zoomOut } = useControls();
+  const [muted, setMuted] = useState(false);
+
+  const toggleMute = () => {
+    const next = !muted;
+    setMuted(next);
+    setPlaybackMuted(next);
+  };
 
   return (
     <div className="absolute bottom-4 right-4 z-10 flex flex-col gap-1">
+      <button
+        onClick={toggleMute}
+        className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+        title={muted ? 'Unmute AI voice' : 'Mute AI voice'}
+      >
+        {muted ? (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path d="M9.547 3.062A.75.75 0 0 1 10 3.75v12.5a.75.75 0 0 1-1.264.546L4.703 13H3.167a.75.75 0 0 1-.7-.48A6.985 6.985 0 0 1 2 10c0-.887.165-1.737.467-2.52a.75.75 0 0 1 .7-.48h1.536l4.033-3.796a.75.75 0 0 1 .811-.142ZM13.78 7.22a.75.75 0 1 0-1.06 1.06L14.44 10l-1.72 1.72a.75.75 0 0 0 1.06 1.06L15.5 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L16.56 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L15.5 8.94l-1.72-1.72Z" />
+          </svg>
+        ) : (
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+            <path d="M10 3.75a.75.75 0 0 0-1.264-.546L4.703 7H3.167a.75.75 0 0 0-.7.48A6.985 6.985 0 0 0 2 10c0 .887.165 1.737.467 2.52.111.29.39.48.7.48h1.536l4.033 3.796A.75.75 0 0 0 10 16.25V3.75ZM15.95 5.05a.75.75 0 0 0-1.06 1.061 5.5 5.5 0 0 1 0 7.778.75.75 0 0 0 1.06 1.06 7 7 0 0 0 0-9.899ZM13.829 7.172a.75.75 0 0 0-1.061 1.06 2.5 2.5 0 0 1 0 3.536.75.75 0 0 0 1.06 1.06 4 4 0 0 0 0-5.656Z" />
+          </svg>
+        )}
+      </button>
       <button
         onClick={() => zoomIn(0.3)}
         className="w-8 h-8 flex items-center justify-center rounded-lg glass text-gray-600 dark:text-white/70 hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-lg font-medium"

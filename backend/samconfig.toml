@@ -8,3 +8,4 @@ region = "us-east-1"
 confirm_changeset = false
 capabilities = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
 parameter_overrides = "Environment=\"dev\""
+profile = "archflow-personal"

@@ -7,15 +7,12 @@
 
 set -e
 
-PROFILE="${1:-archflow-sso}"
+PROFILE="${1:-archflow-personal}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "==> Refreshing AWS SSO credentials for profile: ${PROFILE}"
-aws sso login --profile "${PROFILE}"
-
-echo "==> Starting ArchFlow voice server..."
+echo "==> Starting ArchFlow voice server with profile: ${PROFILE}"
 cd "${SCRIPT_DIR}"
 export BEDROCK_MODEL_SONIC="amazon.nova-2-sonic-v1:0"
 export CONVERSATION_TABLE_NAME="archflow-conversations-dev"
-export UPLOADS_BUCKET="archflow-uploads-dev-217010064221"
+export UPLOADS_BUCKET="archflow-uploads-dev-285688017030"
 voice_venv/bin/python -m voice_server.server --profile "${PROFILE}"

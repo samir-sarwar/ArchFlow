@@ -17,16 +17,27 @@ export function getAudioLevel(analyser: AnalyserNode): number {
 // ---- Audio Playback ----
 
 let playbackContext: AudioContext | null = null;
+let masterGain: GainNode | null = null;
 
 function getPlaybackContext(sampleRate: number): AudioContext {
   if (!playbackContext || playbackContext.state === 'closed') {
     playbackContext = new AudioContext({ sampleRate });
+    masterGain = playbackContext.createGain();
+    masterGain.connect(playbackContext.destination);
   }
   // Resume if suspended (browser autoplay policy)
   if (playbackContext.state === 'suspended') {
     playbackContext.resume();
   }
   return playbackContext;
+}
+
+export function setPlaybackMuted(muted: boolean): void {
+  if (masterGain) masterGain.gain.value = muted ? 0 : 1;
+}
+
+function getDestination(ctx: AudioContext): AudioNode {
+  return masterGain ?? ctx.destination;
 }
 
 /**
@@ -83,7 +94,7 @@ export function createChunkPlayer(
 
     const source = ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(ctx.destination);
+    source.connect(getDestination(ctx));
 
     // Schedule right after the previous chunk for gapless playback
     const startTime = Math.max(ctx.currentTime, nextStartTime);
@@ -167,7 +178,7 @@ export async function playLPCMAudio(
 
   const source = ctx.createBufferSource();
   source.buffer = buffer;
-  source.connect(ctx.destination);
+  source.connect(getDestination(ctx));
 
   onStateChange?.(true);
   source.start();
