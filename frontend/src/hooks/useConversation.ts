@@ -660,6 +660,7 @@ export function useConversation() {
     isRecording: conversationStore.isRecording,
     isConnected,
     isVoiceConnected,
+    isVoiceServerAvailable: VOICE_WS_URL !== WS_URL,
     sendMessage,
     startVoiceSession,
     sendAudioChunk,

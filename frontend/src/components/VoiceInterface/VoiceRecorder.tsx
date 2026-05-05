@@ -12,6 +12,7 @@ export function VoiceRecorder() {
     stopVoiceSession,
     stopAudioPlayback,
     isConnected,
+    isVoiceServerAvailable,
   } = useConversation();
   const { setRecording } = useConversationStore();
   const isAudioPlaying = useConversationStore((s) => s.isAudioPlaying);
@@ -76,8 +77,8 @@ export function VoiceRecorder() {
     }
   };
 
-  // Only disable when not connected — allow during loading/audio playback for barge-in
-  const isDisabled = !isConnected;
+  // Only disable when not connected or no separate voice server is deployed
+  const isDisabled = !isConnected || !isVoiceServerAvailable;
 
   return (
     <div className="flex items-center gap-2">
@@ -93,7 +94,7 @@ export function VoiceRecorder() {
               ? 'bg-blue-100 hover:bg-blue-200 text-blue-700 ring-2 ring-blue-400 animate-pulse'
               : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
         }`}
-        title={isRecording ? 'Stop recording' : 'Start voice input'}
+        title={isRecording ? 'Stop recording' : isVoiceServerAvailable ? 'Start voice input' : 'Voice unavailable (no voice server configured)'}
       >
         {isRecording ? (
           <svg
