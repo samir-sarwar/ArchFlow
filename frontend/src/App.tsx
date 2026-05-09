@@ -8,6 +8,7 @@ import { VoiceIndicator } from '@/components/VoiceIndicator';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { Toast } from '@/components/shared/Toast';
+import { CreditsExhaustedModal } from '@/components/shared/CreditsExhaustedModal';
 import { Dropzone, FileList } from '@/components/FileUpload';
 import { useConversation } from '@/hooks/useConversation';
 import { useFileUpload } from '@/hooks/useFileUpload';
@@ -74,6 +75,9 @@ export default function App() {
 
       {/* Input bar */}
       <InputBar uploadFile={uploadFile} />
+
+      {/* AWS credits exhausted modal */}
+      <CreditsExhaustedModal />
 
       {/* Toast Notifications */}
       <div className="fixed bottom-4 right-4 flex flex-col gap-2 z-50">

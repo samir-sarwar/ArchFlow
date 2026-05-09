@@ -26,6 +26,7 @@ interface UIStore {
   notifications: Notification[];
   sidebarOpen: boolean;
   chatOverlayOpen: boolean;
+  creditsExhaustedOpen: boolean;
   theme: Theme;
   activeView: ActiveView;
 
@@ -38,6 +39,7 @@ interface UIStore {
   setSidebarOpen: (open: boolean) => void;
   toggleChatOverlay: () => void;
   setChatOverlayOpen: (open: boolean) => void;
+  setCreditsExhaustedOpen: (open: boolean) => void;
   setTheme: (theme: Theme) => void;
   toggleTheme: () => void;
   setActiveView: (view: ActiveView) => void;
@@ -49,6 +51,7 @@ export const useUIStore = create<UIStore>((set) => ({
   notifications: [],
   sidebarOpen: true,
   chatOverlayOpen: true,
+  creditsExhaustedOpen: false,
   theme: getStoredTheme(),
   activeView: 'preview',
 
@@ -76,6 +79,8 @@ export const useUIStore = create<UIStore>((set) => ({
   toggleChatOverlay: () =>
     set((state) => ({ chatOverlayOpen: !state.chatOverlayOpen })),
   setChatOverlayOpen: (open) => set({ chatOverlayOpen: open }),
+
+  setCreditsExhaustedOpen: (open) => set({ creditsExhaustedOpen: open }),
 
   setTheme: (theme) => {
     try { localStorage.setItem('archflow-theme', theme); } catch {}

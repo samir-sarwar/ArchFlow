@@ -3,6 +3,7 @@ import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useConversation } from '@/hooks/useConversation';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useUIStore } from '@/stores/uiStore';
+import { CREDITS_EXHAUSTED } from '@/utils/credits';
 import { AudioVisualizer } from '@/components/VoiceInterface/AudioVisualizer';
 import { Square } from 'lucide-react';
 
@@ -19,6 +20,7 @@ export function VoiceIndicator() {
   const voiceStatus = useConversationStore((s) => s.voiceStatus);
   const isRecording = useConversationStore((s) => s.isRecording);
   const addNotification = useUIStore((s) => s.addNotification);
+  const setCreditsExhaustedOpen = useUIStore((s) => s.setCreditsExhaustedOpen);
 
   const [showReadyHint, setShowReadyHint] = useState(false);
   const prevAudioPlayingRef = useRef(false);
@@ -52,6 +54,10 @@ export function VoiceIndicator() {
   });
 
   const handleStart = async () => {
+    if (CREDITS_EXHAUSTED) {
+      setCreditsExhaustedOpen(true);
+      return;
+    }
     if (isAudioPlaying) stopAudioPlayback();
     setShowReadyHint(false);
     setRecording(true);

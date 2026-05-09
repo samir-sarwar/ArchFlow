@@ -3,6 +3,7 @@ import { useVoiceRecording } from '@/hooks/useVoiceRecording';
 import { useConversation } from '@/hooks/useConversation';
 import { useConversationStore } from '@/stores/conversationStore';
 import { useUIStore } from '@/stores/uiStore';
+import { CREDITS_EXHAUSTED } from '@/utils/credits';
 import { AudioVisualizer } from './AudioVisualizer';
 
 export function VoiceRecorder() {
@@ -18,6 +19,7 @@ export function VoiceRecorder() {
   const isAudioPlaying = useConversationStore((s) => s.isAudioPlaying);
   const voiceStatus = useConversationStore((s) => s.voiceStatus);
   const addNotification = useUIStore((s) => s.addNotification);
+  const setCreditsExhaustedOpen = useUIStore((s) => s.setCreditsExhaustedOpen);
 
   // "Ready to listen" hint after AI finishes speaking
   const [showReadyHint, setShowReadyHint] = useState(false);
@@ -48,6 +50,10 @@ export function VoiceRecorder() {
   });
 
   const handleStart = async () => {
+    if (CREDITS_EXHAUSTED) {
+      setCreditsExhaustedOpen(true);
+      return;
+    }
     // Barge-in: stop AI audio if playing
     if (isAudioPlaying) {
       stopAudioPlayback();

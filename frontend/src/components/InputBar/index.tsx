@@ -3,6 +3,7 @@ import { useConversation } from '@/hooks/useConversation';
 import { useUIStore } from '@/stores/uiStore';
 import { useConversationStore } from '@/stores/conversationStore';
 import { Mic, Plus, Send, MessageSquare, Github } from 'lucide-react';
+import { CREDITS_EXHAUSTED } from '@/utils/credits';
 
 // Matches @github: followed by a URL (or partial text) anywhere in the input
 const GITHUB_MENTION_RE = /@github:\s*\S*/i;
@@ -23,6 +24,7 @@ export function InputBar({ uploadFile }: InputBarProps) {
   const isLoading = useUIStore((s) => s.isLoading);
   const chatOverlayOpen = useUIStore((s) => s.chatOverlayOpen);
   const toggleChatOverlay = useUIStore((s) => s.toggleChatOverlay);
+  const setCreditsExhaustedOpen = useUIStore((s) => s.setCreditsExhaustedOpen);
   const isRecording = useConversationStore((s) => s.isRecording);
 
   const resizeTextarea = useCallback(() => {
@@ -48,6 +50,10 @@ export function InputBar({ uploadFile }: InputBarProps) {
 
   const doSubmit = () => {
     if (!input.trim() || !isConnected || isLoading) return;
+    if (CREDITS_EXHAUSTED) {
+      setCreditsExhaustedOpen(true);
+      return;
+    }
     sendMessage(input.trim());
     setInput('');
     setIsMultiLine(false);
@@ -185,6 +191,10 @@ export function InputBar({ uploadFile }: InputBarProps) {
                 }`}
               title="Voice input"
               onClick={() => {
+                if (CREDITS_EXHAUSTED) {
+                  setCreditsExhaustedOpen(true);
+                  return;
+                }
                 window.dispatchEvent(new CustomEvent('toggle-voice-recording'));
               }}
             >
